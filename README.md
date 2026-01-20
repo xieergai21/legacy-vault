@@ -300,15 +300,9 @@ Legacy Vault is experimental software. While we strive for security and reliabil
 
 ## 📬 Contact
 
-*Contact channels coming soon*
-
-<!--
-Uncomment when ready:
-- Website: [legacyvault.io](https://legacyvault.io)
-- Twitter: [@LegacyVaultApp](https://twitter.com/LegacyVaultApp)
-- Discord: [Join our community](https://discord.gg/legacyvault)
-- Email: hello@legacyvault.io
--->
+- GitHub: [github.com/xieergai21/legacy-vault](https://github.com/xieergai21/legacy-vault)
+- Telegram: [t.me/legacyvault](https://t.me/legacyvault)
+- Medium: [medium.com/@blazeV2](https://medium.com/@blazeV2)
 
 ---
 
