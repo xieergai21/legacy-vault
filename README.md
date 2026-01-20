@@ -1,5 +1,9 @@
 # Legacy Vault 🔐
 
+> ⚠️ **Development Status: Beta on Massa Buildnet**
+> 
+> This project is under active development and testing. Smart contracts are currently deployed on Massa Buildnet only. **Do NOT use with significant funds** until mainnet release is officially announced. Use at your own risk.
+
 **Decentralized Inheritance Management on Massa Blockchain**
 
 Legacy Vault is a trustless dead man's switch protocol that enables autonomous asset transfer and encrypted file inheritance. If you don't check in within your specified interval, your designated heirs automatically receive access to your digital legacy.
@@ -170,7 +174,7 @@ Full documentation: [docs/CONTRACTS.md](docs/CONTRACTS.md)
 
 ### For Users
 
-1. Visit [app.legacyvault.io](https://app.legacyvault.io) (coming soon)
+1. Visit [app.legacy-vault.xyz](https://app.legacy-vault.xyz)
 2. Connect your Massa wallet (Bearby or Massa Station)
 3. Create your first vault
 4. Add heirs and set your check-in interval
