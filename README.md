@@ -302,7 +302,7 @@ Legacy Vault is experimental software. While we strive for security and reliabil
 
 - GitHub: [github.com/xieergai21/legacy-vault](https://github.com/xieergai21/legacy-vault)
 - Telegram: [t.me/legacyvault](https://t.me/legacyvault)
-- Medium: [medium.com/@blazeV2](https://medium.com/@blazeV2)
+- Medium: [medium.com/@legacy-vault](https://medium.com/@legacy-vault)
 
 ---
 
