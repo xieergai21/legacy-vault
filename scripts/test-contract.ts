@@ -1,5 +1,5 @@
 /**
- * LEGACY VAULT - TEST SCRIPT (ASC version)
+ * LEGACY VAULT - ТЕСТОВЫЙ СКРИПТ (ASC версия)
  */
 
 import * as dotenv from 'dotenv';
@@ -29,31 +29,31 @@ function fromNanoMassa(nano: bigint): string {
 }
 
 async function test(): Promise<void> {
-  console.log('🧪 TESTING LEGACY VAULT (ASC version)\n');
+  console.log('🧪 ТЕСТИРОВАНИЕ LEGACY VAULT (ASC версия)\n');
   console.log('═'.repeat(60));
 
   const account = await Account.fromPrivateKey(config.privateKey);
   const walletAddress = account.address.toString();
-  console.log(`👛 Wallet: ${walletAddress}`);
-  console.log(`📄 Contract: ${config.contractAddress}\n`);
+  console.log(`👛 Кошелек: ${walletAddress}`);
+  console.log(`📄 Контракт: ${config.contractAddress}\n`);
 
   const provider = Web3Provider.buildnet(account);
   const contract = new SmartContract(provider, config.contractAddress);
 
   // ===== TEST 1: Check rate =====
   console.log('═'.repeat(60));
-  console.log('📊 TEST 1: Get MASSA/USD rate');
+  console.log('📊 ТЕСТ 1: Получение курса MASSA/USD');
   console.log('═'.repeat(60));
   
   try {
     const rateResult = await contract.read('getRate', new Args().serialize());
     const rate = new Args(rateResult.value).nextU64();
-    console.log(`✅ Rate: ${rate} cents per 1 MASSA ($${Number(rate) / 100})`);
+    console.log(`✅ Курс: ${rate} центов за 1 MASSA ($${Number(rate) / 100})`);
   } catch (e: any) {
-    console.log(`❌ Error: ${e.message}`);
+    console.log(`❌ Ошибка: ${e.message}`);
   }
 
-  // ===== TEST 2: Check tier prices =====
+  // ===== TEST 2: Check tier price =====
   console.log('\n' + '═'.repeat(60));
   console.log('💰 TEST 2: Tier prices');
   console.log('═'.repeat(60));
@@ -77,9 +77,9 @@ async function test(): Promise<void> {
   try {
     const hasVaultResult = await contract.read('hasVault', new Args().addString(walletAddress).serialize());
     const hasVault = new Args(hasVaultResult.value).nextU64();
-    console.log(`✅ Vault exists: ${hasVault === 1n ? 'YES' : 'NO'}`);
+    console.log(`✅ Vault существует: ${hasVault === 1n ? 'ДА' : 'НЕТ'}`);
   } catch (e: any) {
-    console.log(`❌ Error: ${e.message}`);
+    console.log(`❌ Ошибка: ${e.message}`);
   }
 
   // ===== TEST 4: Create vault (FREE tier) with 6 MAS =====
@@ -89,41 +89,42 @@ async function test(): Promise<void> {
 
   const testHeir = 'AU12UBnqTHDQALpocVBnkPNy7y5CndUJQTLutaVDDFgMJcq5kQiKq';
   
-  // Using 1 day + 1 minute (contract requires minimum 1 day)
+  // Using 2 minutes for test (120000 ms) - but contract requires minimum 1 day
+  // Поэтому ставим 1 день + 1 минуту
   const oneDay = 86400000;
   
   const createArgs = new Args()
     .addU8(0)                    // tier: FREE
-    .addU32(1)                   // number of heirs
-    .addString(testHeir)         // heir address
-    .addU64(BigInt(oneDay))      // interval: 1 day
+    .addU32(1)                   // количество наследников
+    .addString(testHeir)         // адрес наследника
+    .addU64(BigInt(oneDay))      // интервал: 1 день
     .addString('Test encrypted payload ASC')
     .addString('')
     .addString('test-encrypted-key-asc');
 
   try {
-    console.log('   Sending 6 MAS (5 Gas Tank + 0.01 fee + remainder)...');
+    console.log('   Отправляем 6 MAS (5 Gas Tank + 0.01 fee + остаток)...');
     const op = await contract.call('createVault', createArgs.serialize(), {
       coins: toNanoMassa(6),  // 6 MAS for Gas Tank
       maxGas: 500_000_000n,   // More gas for deferred call
     });
     
     console.log(`   📤 Operation ID: ${op.id}`);
-    console.log('   ⏳ Waiting for confirmation...');
+    console.log('   ⏳ Ожидаем подтверждения...');
     
     await op.waitFinalExecution();
-    console.log('   ✅ Vault created with ASC timer!');
+    console.log('   ✅ Vault создан с ASC таймером!');
   } catch (e: any) {
     if (e.message.includes('Vault exists')) {
-      console.log('   ⚠️  Vault already exists');
+      console.log('   ⚠️  Vault уже существует');
     } else {
-      console.log(`   ❌ Error: ${e.message}`);
+      console.log(`   ❌ Ошибка: ${e.message}`);
     }
   }
 
-  // ===== TEST 5: Get vault data =====
+  // ===== ТЕСТ 5: Получение данных vault =====
   console.log('\n' + '═'.repeat(60));
-  console.log('📖 TEST 5: Read vault data');
+  console.log('📖 ТЕСТ 5: Чтение данных vault');
   console.log('═'.repeat(60));
 
   try {
@@ -135,13 +136,13 @@ async function test(): Promise<void> {
     if (parts.length >= 6) {
       console.log(`   ├─ Tier: ${parts[0]}`);
       console.log(`   ├─ Unlock Date: ${new Date(parseInt(parts[1])).toISOString()}`);
-      console.log(`   ├─ Interval: ${parseInt(parts[2]) / 1000 / 60 / 60} hours`);
+      console.log(`   ├─ Interval: ${parseInt(parts[2]) / 1000 / 60 / 60} часов`);
       console.log(`   ├─ Last Ping: ${new Date(parseInt(parts[3])).toISOString()}`);
       console.log(`   ├─ Active: ${parts[4] === '1' ? 'YES' : 'NO'}`);
       console.log(`   └─ Balance: ${fromNanoMassa(BigInt(parts[5]))} MASSA`);
     }
   } catch (e: any) {
-    console.log(`   ❌ Error: ${e.message}`);
+    console.log(`   ❌ Ошибка: ${e.message}`);
   }
 
   // ===== TEST 6: Check Deferred Call ID =====
@@ -154,21 +155,21 @@ async function test(): Promise<void> {
     const callId = new TextDecoder().decode(dcResult.value);
     if (callId.length > 0) {
       console.log(`   ✅ Deferred Call ID: ${callId}`);
-      console.log(`   🤖 Contract will automatically wake up!`);
+      console.log(`   🤖 Контракт автоматически пробудится!`);
     } else {
-      console.log(`   ⚠️  No active Deferred Call`);
+      console.log(`   ⚠️  Нет активного Deferred Call`);
     }
   } catch (e: any) {
-    console.log(`   ❌ Error: ${e.message}`);
+    console.log(`   ❌ Ошибка: ${e.message}`);
   }
 
-  // ===== TEST 7: Ping =====
+  // ===== ТЕСТ 7: Ping =====
   console.log('\n' + '═'.repeat(60));
-  console.log('🏓 TEST 7: Ping (reset timer + new ASC)');
+  console.log('🏓 ТЕСТ 7: Ping (сброс таймера + новый ASC)');
   console.log('═'.repeat(60));
 
   try {
-    console.log('   Sending ping with 5.1 MAS...');
+    console.log('   Отправляем ping с 5.1 MAS...');
     const op = await contract.call('ping', new Args().serialize(), {
       coins: toNanoMassa(5.1),  // Gas Tank + fee
       maxGas: 500_000_000n,
@@ -176,18 +177,18 @@ async function test(): Promise<void> {
     
     console.log(`   📤 Operation ID: ${op.id}`);
     await op.waitFinalExecution();
-    console.log('   ✅ Ping successful! New ASC timer set.');
+    console.log('   ✅ Ping успешен! Новый ASC таймер установлен.');
   } catch (e: any) {
-    console.log(`   ❌ Error: ${e.message}`);
+    console.log(`   ❌ Ошибка: ${e.message}`);
   }
 
-  // ===== TEST 8: Deposit =====
+  // ===== ТЕСТ 8: Deposit =====
   console.log('\n' + '═'.repeat(60));
-  console.log('💵 TEST 8: Deposit (add funds for heirs)');
+  console.log('💵 TEST 8: Deposit (adding funds for heirs)');
   console.log('═'.repeat(60));
 
   try {
-    console.log('   Sending 1 MASSA to vault...');
+    console.log('   Отправляем 1 MASSA в vault...');
     const op = await contract.call('deposit', new Args().serialize(), {
       coins: toNanoMassa(1),
       maxGas: 50_000_000n,
@@ -195,37 +196,37 @@ async function test(): Promise<void> {
     
     console.log(`   📤 Operation ID: ${op.id}`);
     await op.waitFinalExecution();
-    console.log('   ✅ Deposit successful!');
+    console.log('   ✅ Deposit успешен!');
   } catch (e: any) {
-    console.log(`   ❌ Error: ${e.message}`);
+    console.log(`   ❌ Ошибка: ${e.message}`);
   }
 
-  // ===== TEST 9: Time until unlock =====
+  // ===== ТЕСТ 9: Время до разблокировки =====
   console.log('\n' + '═'.repeat(60));
-  console.log('⏰ TEST 9: Time until unlock');
+  console.log('⏰ ТЕСТ 9: Время до разблокировки');
   console.log('═'.repeat(60));
 
   try {
     const timeResult = await contract.read('getTimeUntilUnlock', new Args().addString(walletAddress).serialize());
     const timeMs = new Args(timeResult.value).nextU64();
     const hours = Number(timeMs) / 1000 / 60 / 60;
-    console.log(`   ✅ Time until unlock: ${hours.toFixed(2)} hours`);
+    console.log(`   ✅ До разблокировки: ${hours.toFixed(2)} часов`);
   } catch (e: any) {
-    console.log(`   ❌ Error: ${e.message}`);
+    console.log(`   ❌ Ошибка: ${e.message}`);
   }
 
-  // ===== SUMMARY =====
+  // ===== ИТОГИ =====
   console.log('\n' + '═'.repeat(60));
-  console.log('🏁 TESTING COMPLETE');
+  console.log('🏁 ТЕСТИРОВАНИЕ ЗАВЕРШЕНО');
   console.log('═'.repeat(60));
-  console.log('\n✅ Contract works in AUTONOMOUS mode!');
-  console.log('⚡ Deferred Call scheduled - contract will wake up automatically.');
-  console.log('🚫 Keeper Bot no longer needed!\n');
+  console.log('\n✅ Контракт работает в АВТОНОМНОМ режиме!');
+  console.log('⚡ Deferred Call запланирован - контракт сам пробудится.');
+  console.log('🚫 Keeper Bot больше не нужен!\n');
 }
 
 test()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('❌ Error:', error);
+    console.error('❌ Ошибка:', error);
     process.exit(1);
   });

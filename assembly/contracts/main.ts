@@ -1,5 +1,12 @@
 /**
- * LEGACY VAULT - AUTONOMOUS SMART CONTRACT
+ * LEGACY VAULT - AUTONOMOUS SMART CONTRACT v2
+ * Decentralized version with dynamic pricing
+ * 
+ * Changes v2:
+ * - Removed dependency on internal RATE for price validation
+ * - Frontend passes tierPayment as separate argument
+ * - Contract accepts payment and sends to admin
+ * - RATE is used only for read-only functions (getTierPrice)
  */
 
 import {
@@ -33,11 +40,18 @@ const INITIALIZED_KEY: string = 'INIT';
 const DEFERRED_CALL_PREFIX: string = 'DC_';
 const HEIR_VAULTS_PREFIX: string = 'HEIR_';
 const DISTRIBUTED_PREFIX: string = 'DIST_';
+const TOTAL_REVENUE_KEY: string = 'REVENUE';
 
+// Prices in USD cents (for reference, not for validation)
 const TIER_PRICE_FREE: u64 = 0;
-const TIER_PRICE_LIGHT: u64 = 999;
-const TIER_PRICE_VAULT_PRO: u64 = 2999;
-const TIER_PRICE_LEGATE: u64 = 8999;
+const TIER_PRICE_LIGHT: u64 = 999;      // $9.99
+const TIER_PRICE_VAULT_PRO: u64 = 2999; // $29.99
+const TIER_PRICE_LEGATE: u64 = 8999;    // $89.99
+
+// Minimum prices in MAS (protection from free usage of paid tiers)
+const MIN_TIER_PRICE_LIGHT: u64 = 50_000_000_000;     // 50 MAS minimum
+const MIN_TIER_PRICE_VAULT_PRO: u64 = 150_000_000_000; // 150 MAS minimum  
+const MIN_TIER_PRICE_LEGATE: u64 = 450_000_000_000;   // 450 MAS minimum
 
 const MAX_HEIRS_FREE: u8 = 1;
 const MAX_HEIRS_LIGHT: u8 = 3;
@@ -70,9 +84,10 @@ function _vaultExists(address: string): bool { return Storage.has(stringToBytes(
 function _getMassaUsdRate(): u64 {
   const key = stringToBytes(RATE_KEY);
   if (Storage.has(key)) { return bytesToU64(Storage.get(key)); }
-  return 50;
+  return 5; // Default 5 cents ($0.05)
 }
 
+// For read-only: approximate tier price
 function _usdToMassa(usdCents: u64): u64 {
   const rate = _getMassaUsdRate();
   if (rate == 0) return 0;
@@ -84,6 +99,15 @@ function _getTierPriceUsd(tier: u8): u64 {
   if (tier == TIER_LIGHT) return TIER_PRICE_LIGHT;
   if (tier == TIER_VAULT_PRO) return TIER_PRICE_VAULT_PRO;
   if (tier == TIER_LEGATE) return TIER_PRICE_LEGATE;
+  return 0;
+}
+
+// Minimum price in MAS (protection)
+function _getMinTierPriceMassa(tier: u8): u64 {
+  if (tier == TIER_FREE) return 0;
+  if (tier == TIER_LIGHT) return MIN_TIER_PRICE_LIGHT;
+  if (tier == TIER_VAULT_PRO) return MIN_TIER_PRICE_VAULT_PRO;
+  if (tier == TIER_LEGATE) return MIN_TIER_PRICE_LEGATE;
   return 0;
 }
 
@@ -105,6 +129,17 @@ function _getOracle(): string {
   return bytesToString(Storage.get(key));
 }
 
+function _getTotalRevenue(): u64 {
+  const key = stringToBytes(TOTAL_REVENUE_KEY);
+  if (!Storage.has(key)) return 0;
+  return bytesToU64(Storage.get(key));
+}
+
+function _addRevenue(amount: u64): void {
+  const current = _getTotalRevenue();
+  Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(current + amount));
+}
+
 function _saveVault(owner: string, data: string): void { Storage.set(stringToBytes(_getVaultKey(owner)), stringToBytes(data)); }
 function _loadVault(owner: string): string { return bytesToString(Storage.get(stringToBytes(_getVaultKey(owner)))); }
 function _saveDeferredCallId(owner: string, callId: string): void { Storage.set(stringToBytes(_getDeferredCallKey(owner)), stringToBytes(callId)); }
@@ -119,6 +154,7 @@ function _deleteDeferredCallId(owner: string): void {
   const key = stringToBytes(_getDeferredCallKey(owner));
   if (Storage.has(key)) { Storage.del(key); }
 }
+
 function _addVaultToHeir(heir: string, owner: string): void {
   const key = stringToBytes(_getHeirVaultsKey(heir));
   let owners = '';
@@ -181,20 +217,38 @@ export function constructor(binaryArgs: StaticArray<u8>): void {
   const adminAddress = args.nextString().unwrap();
   Storage.set(stringToBytes(ORACLE_KEY), stringToBytes(oracleAddress));
   Storage.set(stringToBytes(ADMIN_KEY), stringToBytes(adminAddress));
-  Storage.set(stringToBytes(RATE_KEY), u64ToBytes(50));
+  Storage.set(stringToBytes(RATE_KEY), u64ToBytes(5)); // Default 5 cents
   Storage.set(stringToBytes(INITIALIZED_KEY), u64ToBytes(1));
+  Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(0));
   generateEvent('CONTRACT_INITIALIZED:oracle=' + oracleAddress + ':admin=' + adminAddress);
 }
 
+// Oracle can update rate for read-only functions
 export function updateRate(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
-  assert(caller == _getOracle(), 'Only oracle');
+  assert(caller == _getOracle() || caller == _getAdmin(), 'Only oracle or admin');
   const args = new Args(binaryArgs);
   const newRate = args.nextU64().unwrap();
   assert(newRate > 0 && newRate < 1000000, 'Rate out of range');
   Storage.set(stringToBytes(RATE_KEY), u64ToBytes(newRate));
   generateEvent('RATE_UPDATED:' + newRate.toString());
 }
+
+/**
+ * createVault v2 - with explicit tier payment
+ * 
+ * Аргументы:
+ * - tier: u8
+ * - heirsCount: u32
+ * - heirs: string[] (heirsCount штук)
+ * - interval: u64 (ms)
+ * - payload: string
+ * - arweaveTxId: string
+ * - encryptedKey: string
+ * - tierPayment: u64 (tier payment in nanoMAS, calculated by frontend)
+ * 
+ * Transferred coins = tierPayment + MIN_AS_DEPOSIT + ORACLE_FEE + userBalance
+ */
 export function createVault(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   if (_vaultExists(caller)) {
@@ -203,15 +257,19 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     assert(oldParts[4] == '0', 'Vault already active');
     _deleteDeferredCallId(caller);
   }
+  
   const transferred = Context.transferredCoins();
   assert(transferred >= MIN_AS_DEPOSIT, 'Send at least 5 MAS');
+  
   const args = new Args(binaryArgs);
   const tier = args.nextU8().unwrap();
   assert(tier <= TIER_LEGATE, 'Invalid tier');
+  
   const heirsCount = args.nextU32().unwrap();
   const maxHeirs = _getMaxHeirs(tier);
   assert(heirsCount <= maxHeirs as u32, 'Too many heirs');
   assert(heirsCount > 0, 'Need at least 1 heir');
+  
   let heirsArray: string[] = [];
   let heirsData = '';
   for (let i: u32 = 0; i < heirsCount; i++) {
@@ -220,36 +278,71 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     heirsArray.push(heir);
     heirsData += heir + ',';
   }
+  
   const interval = args.nextU64().unwrap();
   assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short');
+  
   const payloadResult = args.nextString();
   const payload = payloadResult.isErr() ? '' : payloadResult.unwrap();
   const payloadSize = payload.length as u32;
   if (tier == 0) { assert(payloadSize <= MAX_PAYLOAD_FREE, 'Payload too large'); }
   else if (tier == 1) { assert(payloadSize <= MAX_PAYLOAD_LIGHT, 'Payload too large'); }
   else { assert(payloadSize <= MAX_PAYLOAD_PRO, 'Payload too large'); }
+  
   const arweaveResult = args.nextString();
   const arweaveTxId = arweaveResult.isErr() ? '' : arweaveResult.unwrap();
   if (arweaveTxId.length > 0) { assert(tier >= 2, 'Arweave requires PRO+'); }
+  
   const keyResult = args.nextString();
   const encryptedKey = keyResult.isErr() ? '' : keyResult.unwrap();
-  const tierPriceUsd = _getTierPriceUsd(tier);
-  const tierPriceMassa = _usdToMassa(tierPriceUsd);
-  const totalDeductions = tierPriceMassa + ORACLE_FEE + MIN_AS_DEPOSIT;
-  let userBalance: u64 = 0;
-  if (transferred > totalDeductions) { userBalance = transferred - totalDeductions; }
-  if (tierPriceMassa > 0) {
-    const admin = _getAdmin();
-    if (admin.length > 0) { transferCoins(new Address(admin), tierPriceMassa); }
+  
+  // НОВОЕ: tierPayment передаётся явно от frontend
+  const tierPaymentResult = args.nextU64();
+  let tierPayment: u64 = 0;
+  
+  if (tierPaymentResult.isOk()) {
+    tierPayment = tierPaymentResult.unwrap();
+  } else {
+    // Fallback: используем старую логику с RATE
+    tierPayment = _usdToMassa(_getTierPriceUsd(tier));
   }
+  
+  // Minimum price check (protection from exploits)
+  const minPrice = _getMinTierPriceMassa(tier);
+  if (tier > 0) {
+    assert(tierPayment >= minPrice, 'Payment below minimum');
+  }
+  
+  // Расчёт
+  const totalDeductions = tierPayment + ORACLE_FEE + MIN_AS_DEPOSIT;
+  assert(transferred >= totalDeductions, 'Insufficient funds');
+  
+  let userBalance: u64 = 0;
+  if (transferred > totalDeductions) { 
+    userBalance = transferred - totalDeductions; 
+  }
+  
+  // Отправляем оплату админу
+  if (tierPayment > 0) {
+    const admin = _getAdmin();
+    if (admin.length > 0) { 
+      transferCoins(new Address(admin), tierPayment);
+      _addRevenue(tierPayment);
+      generateEvent('TIER_PAID:' + caller + ':tier=' + tier.toString() + ':amount=' + tierPayment.toString());
+    }
+  }
+  
   const now = Context.timestamp();
   const unlockDate = now + interval;
   const vaultData = tier.toString() + '|' + unlockDate.toString() + '|' + interval.toString() + '|' + now.toString() + '|1|' + userBalance.toString() + '|' + heirsData + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey;
   _saveVault(caller, vaultData);
+  
   for (let i = 0; i < heirsArray.length; i++) { _addVaultToHeir(heirsArray[i], caller); }
   _scheduleASC(caller, unlockDate, MIN_AS_DEPOSIT);
-  generateEvent('VAULT_CREATED:' + caller + ':unlockDate=' + unlockDate.toString());
+  
+  generateEvent('VAULT_CREATED:' + caller + ':tier=' + tier.toString() + ':unlockDate=' + unlockDate.toString());
 }
+
 export function ping(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(_vaultExists(caller), 'No vault');
@@ -298,6 +391,7 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   _saveVault(caller, parts.join('|'));
   generateEvent('DEPOSIT:' + caller + ':' + amount.toString());
 }
+
 export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   const receivedCoins = Context.transferredCoins();
   if (receivedCoins < ORACLE_FEE) { generateEvent('TRIGGER_REJECTED:insufficient_gas'); return; }
@@ -342,6 +436,7 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   generateEvent('VAULT_UNLOCKED:' + owner);
   generateEvent('DISTRIBUTION_COMPLETE:' + owner + ':total=' + totalToDistribute.toString());
 }
+
 export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(_vaultExists(caller), 'No vault');
@@ -362,7 +457,6 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   generateEvent('VAULT_DEACTIVATED:' + caller);
 }
 
-
 export function updatePayload(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(_vaultExists(caller), 'No vault');
@@ -376,17 +470,14 @@ export function updatePayload(binaryArgs: StaticArray<u8>): void {
   const arweaveTxId = args.nextString().unwrap();
   const encryptedKey = args.nextString().unwrap();
   
-  // Check payload size by tier
   const tier = U8.parseInt(parts[0]);
   const payloadSize = newPayload.length as u32;
   if (tier == 0) { assert(payloadSize <= MAX_PAYLOAD_FREE, 'Payload too large'); }
   else if (tier == 1) { assert(payloadSize <= MAX_PAYLOAD_LIGHT, 'Payload too large'); }
   else { assert(payloadSize <= MAX_PAYLOAD_PRO, 'Payload too large'); }
   
-  // Arweave only for PRO+
   if (arweaveTxId.length > 0) { assert(tier >= 2, 'Arweave requires PRO+'); }
   
-  // Update parts: [7]=payload, [8]=arweave, [9]=key
   parts[7] = newPayload;
   parts[8] = arweaveTxId;
   parts[9] = encryptedKey;
@@ -394,6 +485,9 @@ export function updatePayload(binaryArgs: StaticArray<u8>): void {
   _saveVault(caller, parts.join('|'));
   generateEvent('PAYLOAD_UPDATED:' + caller);
 }
+
+// ===== READ-ONLY FUNCTIONS =====
+
 export function getVault(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
@@ -411,11 +505,22 @@ export function getTierPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   return u64ToBytes(_usdToMassa(_getTierPriceUsd(tier)));
 }
 
+export function getMinTierPrice(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const tier = args.nextU8().unwrap();
+  return u64ToBytes(_getMinTierPriceMassa(tier));
+}
+
+export function getTotalRevenue(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  return u64ToBytes(_getTotalRevenue());
+}
+
 export function hasVault(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
   return u64ToBytes(_vaultExists(owner) ? 1 : 0);
 }
+
 export function getTimeUntilUnlock(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
@@ -450,6 +555,8 @@ export function getDistributedInfo(binaryArgs: StaticArray<u8>): StaticArray<u8>
   return Storage.get(key);
 }
 
+// ===== ADMIN FUNCTIONS =====
+
 export function updateOracle(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(caller == _getAdmin(), 'Only admin');
@@ -466,6 +573,15 @@ export function transferAdmin(binaryArgs: StaticArray<u8>): void {
   const newAdmin = args.nextString().unwrap();
   Storage.set(stringToBytes(ADMIN_KEY), stringToBytes(newAdmin));
   generateEvent('ADMIN_TRANSFERRED:' + newAdmin);
+}
+
+export function adminWithdraw(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  assert(caller == _getAdmin(), 'Only admin');
+  const args = new Args(binaryArgs);
+  const amount = args.nextU64().unwrap();
+  transferCoins(new Address(caller), amount);
+  generateEvent('ADMIN_WITHDRAW:' + amount.toString());
 }
 
 export function manualTrigger(binaryArgs: StaticArray<u8>): void {

@@ -27,18 +27,18 @@ function toNanoMassa(massa: number): bigint {
 }
 
 async function deploy(): Promise<void> {
-  console.log('🚀 Starting Legacy Vault deployment...\n');
+  console.log('🚀 Начинаем деплой Legacy Vault...\n');
 
   if (!config.privateKey) {
-    throw new Error('❌ DEPLOYER_PRIVATE_KEY is not set in .env');
+    throw new Error('❌ DEPLOYER_PRIVATE_KEY не установлен в .env');
   }
 
   const account = await Account.fromPrivateKey(config.privateKey);
   const walletAddress = account.address.toString();
-  console.log(`👛 Wallet: ${walletAddress}`);
+  console.log(`👛 Кошелек: ${walletAddress}`);
 
   const provider = Web3Provider.buildnet(account);
-  console.log(`🌐 Network: Buildnet`);
+  console.log(`🌐 Сеть: Buildnet`);
 
   const wasmPath = path.resolve(config.wasmPath);
   console.log(`📄 WASM: ${wasmPath}`);
@@ -46,25 +46,25 @@ async function deploy(): Promise<void> {
   let wasmBytes: Uint8Array;
   try {
     wasmBytes = new Uint8Array(readFileSync(wasmPath));
-    console.log(`📦 Size: ${(wasmBytes.length / 1024).toFixed(2)} KB`);
+    console.log(`📦 Размер: ${(wasmBytes.length / 1024).toFixed(2)} KB`);
   } catch (e) {
-    throw new Error(`❌ WASM file not found. Run 'npm run build' first`);
+    throw new Error(`❌ WASM файл не найден. Запустите 'npm run build'`);
   }
 
   const oracleAddress = config.oracleAddress || walletAddress;
   const adminAddress = config.adminAddress || walletAddress;
   
-  console.log(`\n📋 Parameters:`);
+  console.log(`\n📋 Параметры:`);
   console.log(`   Oracle: ${oracleAddress}`);
   console.log(`   Admin:  ${adminAddress}`);
 
-  // Serialize constructor arguments
+  // Сериализуем аргументы конструктора
   const constructorArgs = new Args()
     .addString(oracleAddress)
     .addString(adminAddress);
 
-  console.log('\n⏳ Deploying contract...');
-  console.log('   (this may take 30-60 seconds)\n');
+  console.log('\n⏳ Деплоим контракт...');
+  console.log('   (это может занять 30-60 секунд)\n');
 
   try {
     const contract = await SmartContract.deploy(
@@ -81,21 +81,21 @@ async function deploy(): Promise<void> {
     const contractAddress = contract.address.toString();
     
     console.log('═'.repeat(60));
-    console.log('✅ CONTRACT DEPLOYED SUCCESSFULLY!');
+    console.log('✅ КОНТРАКТ УСПЕШНО ЗАДЕПЛОЕН!');
     console.log('═'.repeat(60));
-    console.log(`\n📍 Contract address: ${contractAddress}\n`);
+    console.log(`\n📍 Адрес контракта: ${contractAddress}\n`);
     console.log('═'.repeat(60));
     
-    console.log('\n📝 Add to .env:');
+    console.log('\n📝 Добавьте в .env:');
     console.log(`CONTRACT_ADDRESS=${contractAddress}`);
     
-    console.log('\n⏳ Waiting for finalization (15 sec)...');
+    console.log('\n⏳ Ожидаем финализации (15 сек)...');
     await new Promise(resolve => setTimeout(resolve, 15000));
     
-    console.log('\n🎉 Done!');
+    console.log('\n🎉 Готово!');
 
   } catch (deployError: any) {
-    console.error('❌ Error:', deployError.message);
+    console.error('❌ Ошибка:', deployError.message);
     throw deployError;
   }
 }
@@ -103,6 +103,6 @@ async function deploy(): Promise<void> {
 deploy()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('\n❌ Deployment failed:', error.message);
+    console.error('\n❌ Деплой провалился:', error.message);
     process.exit(1);
   });

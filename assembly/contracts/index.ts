@@ -3,15 +3,15 @@
  * ║                          LEGACY VAULT EXPORTS                             ║
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  * 
- * Entry point for exporting all public functions and types
+ * Entry point for exporting all public functions and contract types
  */
 
-// Export main contract functions
+// Экспорт основных функций контракта
 export {
-  // Initialization
+  // Инициализация
   constructor,
   
-  // Oracle
+  // Оракул
   updateRate,
   getRate,
   
@@ -27,22 +27,22 @@ export {
   updateHeartbeatInterval,
   updatePayload,
   
-  // Inheritance distribution
+  // Распределение наследства
   triggerDistribution,
   
-  // Read data
+  // Чтение данных
   getVault,
   getTierPrice,
   hasVault,
   getTimeUntilUnlock,
   
-  // Administration
+  // Администрирование
   withdrawFees,
   updateOracle,
   transferAdmin,
 } from './main';
 
-// Export types
+// Экспорт типов
 export {
   EventType,
   ErrorCode,
