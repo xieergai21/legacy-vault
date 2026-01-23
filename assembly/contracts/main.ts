@@ -49,9 +49,9 @@ const TIER_PRICE_VAULT_PRO: u64 = 2999; // $29.99
 const TIER_PRICE_LEGATE: u64 = 8999;    // $89.99
 
 // Minimum prices in MAS (protection from free usage of paid tiers)
-const MIN_TIER_PRICE_LIGHT: u64 = 50_000_000_000;     // 50 MAS minimum
-const MIN_TIER_PRICE_VAULT_PRO: u64 = 150_000_000_000; // 150 MAS minimum  
-const MIN_TIER_PRICE_LEGATE: u64 = 450_000_000_000;   // 450 MAS minimum
+const MIN_TIER_PRICE_LIGHT: u64 = 1_000_000_000_000;     // 1000 MAS minimum
+const MIN_TIER_PRICE_VAULT_PRO: u64 = 3_000_000_000_000; // 3000 MAS minimum  
+const MIN_TIER_PRICE_LEGATE: u64 = 9_000_000_000_000;   // 9000 MAS minimum
 
 const MAX_HEIRS_FREE: u8 = 1;
 const MAX_HEIRS_LIGHT: u8 = 3;
