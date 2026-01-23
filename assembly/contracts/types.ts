@@ -116,7 +116,7 @@ export class TierInfo implements Serializable {
 }
 
 /**
- * Статистика хранилища
+ * Vault statistics
  */
 @serializable
 export class VaultStats implements Serializable {
@@ -170,7 +170,7 @@ export class VaultStats implements Serializable {
 }
 
 /**
- * Параметры создания хранилища
+ * Vault creation parameters
  */
 @serializable
 export class CreateVaultParams implements Serializable {

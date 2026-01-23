@@ -42,7 +42,7 @@ async function test(): Promise<void> {
 
   // ===== TEST 1: Check rate =====
   console.log('═'.repeat(60));
-  console.log('📊 ТЕСТ 1: Получение курса MASSA/USD');
+  console.log('📊 TEST 1: Get MASSA/USD rate');
   console.log('═'.repeat(60));
   
   try {
@@ -95,8 +95,8 @@ async function test(): Promise<void> {
   
   const createArgs = new Args()
     .addU8(0)                    // tier: FREE
-    .addU32(1)                   // количество наследников
-    .addString(testHeir)         // адрес наследника
+    .addU32(1)                   // number of heirs
+    .addString(testHeir)         // heir address
     .addU64(BigInt(oneDay))      // интервал: 1 день
     .addString('Test encrypted payload ASC')
     .addString('')

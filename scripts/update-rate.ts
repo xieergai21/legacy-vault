@@ -1,11 +1,11 @@
 /**
  * LEGACY VAULT - UPDATE RATE SCRIPT
- * Обновляет курс MAS/USD в контракте через CoinGecko API
+ * Updates MAS/USD rate in contract via CoinGecko API
  * 
  * Использование:
- *   npx ts-node update-rate.ts          # Обновить курс
- *   npx ts-node update-rate.ts --check  # Только проверить текущий курс
- *   npx ts-node update-rate.ts --force 5 # Принудительно установить 5 центов
+ *   npx ts-node update-rate.ts          # Update rate
+ *   npx ts-node update-rate.ts --check  # Only check current rate
+ *   npx ts-node update-rate.ts --force 5 # Принудительно установить 5 cents
  */
 
 import * as dotenv from 'dotenv';
@@ -31,7 +31,7 @@ function toNanoMassa(massa: number): bigint {
 }
 
 async function fetchMasPrice(): Promise<number> {
-  console.log('📡 Получаем курс MAS/USD с CoinGecko...');
+  console.log('📡 Getting MAS/USD rate from CoinGecko...');
   
   const response = await fetch(COINGECKO_API);
   if (!response.ok) {
@@ -45,13 +45,13 @@ async function fetchMasPrice(): Promise<number> {
     throw new Error('Invalid price data from CoinGecko');
   }
   
-  console.log(`   💵 Текущий курс: $${price.toFixed(4)} за 1 MAS`);
+  console.log(`   💵 Current rate: $${price.toFixed(4)} за 1 MAS`);
   return price;
 }
 
 function usdToCents(usd: number): number {
   // Конвертируем USD в центы, округляя до целого
-  // Например: $0.0512 = 5.12 центов → 5 центов
+  // Например: $0.0512 = 5.12 cents → 5 cents
   return Math.round(usd * 100);
 }
 
@@ -103,9 +103,9 @@ async function main(): Promise<void> {
   const provider = Web3Provider.buildnet(account);
   const contract = new SmartContract(provider, config.contractAddress);
 
-  // Получаем текущий курс из контракта
+  // Get current rate from contract
   const currentRate = await getCurrentRate(contract);
-  console.log(`\n📊 Текущий RATE в контракте: ${currentRate} центов ($${Number(currentRate) / 100})`);
+  console.log(`\n📊 Current RATE in contract: ${currentRate} cents ($${Number(currentRate) / 100})`);
 
   // Если только проверка - выходим
   if (checkOnly) {
@@ -131,30 +131,30 @@ async function main(): Promise<void> {
     try {
       const realPrice = await fetchMasPrice();
       const realCents = usdToCents(realPrice);
-      console.log(`\n🌐 Реальный курс CoinGecko: ${realCents} центов ($${realPrice.toFixed(4)})`);
+      console.log(`\n🌐 Real CoinGecko rate: ${realCents} cents ($${realPrice.toFixed(4)})`);
       
       if (Number(currentRate) !== realCents) {
-        console.log(`\n⚠️  РАСХОЖДЕНИЕ! Контракт: ${currentRate}¢, Реальный: ${realCents}¢`);
+        console.log(`\n⚠️  MISMATCH! Contract: ${currentRate}¢, Real: ${realCents}¢`);
         console.log(`   Запустите: npx ts-node update-rate.ts`);
       } else {
         console.log(`\n✅ Курс актуален!`);
       }
     } catch (e: any) {
-      console.log(`\n⚠️  Не удалось получить курс с CoinGecko: ${e.message}`);
+      console.log(`\n⚠️  Failed to get rate from CoinGecko: ${e.message}`);
     }
     
     return;
   }
 
-  // Определяем новый курс
+  // Determine new rate
   let newRateCents: number;
   
   if (forceRate !== null) {
-    // Принудительная установка
-    console.log(`\n🔧 Принудительная установка курса: ${forceRate} центов`);
+    // Force update
+    console.log(`\n🔧 Force setting rate: ${forceRate} cents`);
     newRateCents = forceRate;
   } else {
-    // Получаем с CoinGecko
+    // Get from CoinGecko
     const masPrice = await fetchMasPrice();
     newRateCents = usdToCents(masPrice);
     console.log(`   📈 Курс в центах: ${newRateCents}¢`);
@@ -168,17 +168,17 @@ async function main(): Promise<void> {
 
   // Валидация
   if (newRateCents <= 0 || newRateCents >= 1000000) {
-    throw new Error(`❌ Некорректный курс: ${newRateCents}. Должен быть 1-999999 центов.`);
+    throw new Error(`❌ Invalid rate: ${newRateCents}. Must be 1-999999 cents.`);
   }
 
-  console.log(`\n📝 Обновляем курс: ${currentRate}¢ → ${newRateCents}¢`);
+  console.log(`\n📝 Updating rate: ${currentRate}¢ → ${newRateCents}¢`);
 
   // Обновляем
   await updateRate(contract, BigInt(newRateCents), provider);
 
   // Проверяем результат
   const updatedRate = await getCurrentRate(contract);
-  console.log(`\n✅ Новый RATE в контракте: ${updatedRate} центов ($${Number(updatedRate) / 100})`);
+  console.log(`\n✅ Новый RATE в контракте: ${updatedRate} cents ($${Number(updatedRate) / 100})`);
 
   // Показываем новые цены
   console.log('\n💰 Updated tier prices:');
