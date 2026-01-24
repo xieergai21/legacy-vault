@@ -2,10 +2,10 @@
  * LEGACY VAULT - UPDATE RATE SCRIPT
  * Updates MAS/USD rate in contract via CoinGecko API
  * 
- * Использование:
+ * Usage:
  *   npx ts-node update-rate.ts          # Update rate
  *   npx ts-node update-rate.ts --check  # Only check current rate
- *   npx ts-node update-rate.ts --force 5 # Принудительно установить 5 cents
+ *   npx ts-node update-rate.ts --force 5 # Force set 5 cents
  */
 
 import * as dotenv from 'dotenv';
@@ -21,7 +21,7 @@ dotenv.config();
 const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price?ids=massa&vs_currencies=usd';
 
 const config = {
-  // Oracle приватный ключ (должен совпадать с ORACLE_ADDRESS при деплое)
+  // Oracle private key (must match ORACLE_ADDRESS from deploy)
   oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || '',
   contractAddress: process.env.CONTRACT_ADDRESS || 'AS1D5fSHU83ktyGLeb5X143JeFgEqS9M1VAqsajb42vYbkg1Cfo7',
 };
@@ -45,13 +45,13 @@ async function fetchMasPrice(): Promise<number> {
     throw new Error('Invalid price data from CoinGecko');
   }
   
-  console.log(`   💵 Current rate: $${price.toFixed(4)} за 1 MAS`);
+  console.log(`   💵 Current rate: $${price.toFixed(4)} per 1 MAS`);
   return price;
 }
 
 function usdToCents(usd: number): number {
-  // Конвертируем USD в центы, округляя до целого
-  // Например: $0.0512 = 5.12 cents → 5 cents
+  // Convert USD to cents, rounding to integer
+  // Example: $0.0512 = 5.12 cents → 5 cents
   return Math.round(usd * 100);
 }
 
@@ -61,7 +61,7 @@ async function getCurrentRate(contract: SmartContract): Promise<bigint> {
 }
 
 async function updateRate(contract: SmartContract, newRate: bigint, provider: Web3Provider): Promise<void> {
-  console.log(`\n⏳ Отправляем updateRate(${newRate}) в контракт...`);
+  console.log(`\n⏳ Sending updateRate(${newRate}) to contract...`);
   
   const op = await contract.call(
     'updateRate',
@@ -74,10 +74,10 @@ async function updateRate(contract: SmartContract, newRate: bigint, provider: We
   );
   
   console.log(`   📤 Operation ID: ${op.id}`);
-  console.log('   ⏳ Ожидаем подтверждения...');
+  console.log('   ⏳ Waiting for confirmation...');
   
   await op.waitFinalExecution();
-  console.log('   ✅ Курс успешно обновлён!');
+  console.log('   ✅ Rate updated successfully!');
 }
 
 async function main(): Promise<void> {
@@ -91,14 +91,14 @@ async function main(): Promise<void> {
   const forceRate = forceIndex !== -1 ? parseInt(args[forceIndex + 1]) : null;
 
   if (!config.oraclePrivateKey) {
-    throw new Error('❌ ORACLE_PRIVATE_KEY или DEPLOYER_PRIVATE_KEY не установлен в .env');
+    throw new Error('❌ ORACLE_PRIVATE_KEY or DEPLOYER_PRIVATE_KEY not set in .env');
   }
 
-  // Подключаемся к сети
+  // Connecting to network
   const account = await Account.fromPrivateKey(config.oraclePrivateKey);
   const oracleAddress = account.address.toString();
-  console.log(`\n👛 Oracle кошелёк: ${oracleAddress}`);
-  console.log(`📄 Контракт: ${config.contractAddress}`);
+  console.log(`\n👛 Oracle wallet: ${oracleAddress}`);
+  console.log(`📄 Contract: ${config.contractAddress}`);
 
   const provider = Web3Provider.buildnet(account);
   const contract = new SmartContract(provider, config.contractAddress);
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
   const currentRate = await getCurrentRate(contract);
   console.log(`\n📊 Current RATE in contract: ${currentRate} cents ($${Number(currentRate) / 100})`);
 
-  // Если только проверка - выходим
+  // If check only - exit
   if (checkOnly) {
     // Show tier prices
     console.log('\n💰 Tier prices at current rate:');
@@ -135,9 +135,9 @@ async function main(): Promise<void> {
       
       if (Number(currentRate) !== realCents) {
         console.log(`\n⚠️  MISMATCH! Contract: ${currentRate}¢, Real: ${realCents}¢`);
-        console.log(`   Запустите: npx ts-node update-rate.ts`);
+        console.log(`   Run: npx ts-node update-rate.ts`);
       } else {
-        console.log(`\n✅ Курс актуален!`);
+        console.log(`\n✅ Rate is current!`);
       }
     } catch (e: any) {
       console.log(`\n⚠️  Failed to get rate from CoinGecko: ${e.message}`);
@@ -157,30 +157,30 @@ async function main(): Promise<void> {
     // Get from CoinGecko
     const masPrice = await fetchMasPrice();
     newRateCents = usdToCents(masPrice);
-    console.log(`   📈 Курс в центах: ${newRateCents}¢`);
+    console.log(`   📈 Rate in cents: ${newRateCents}¢`);
   }
 
-  // Проверяем, нужно ли обновлять
+  // Check if update needed
   if (BigInt(newRateCents) === currentRate) {
-    console.log('\n✅ Курс уже актуален, обновление не требуется.');
+    console.log('\n✅ Rate already current, no update needed.');
     return;
   }
 
-  // Валидация
+  // Validation
   if (newRateCents <= 0 || newRateCents >= 1000000) {
     throw new Error(`❌ Invalid rate: ${newRateCents}. Must be 1-999999 cents.`);
   }
 
   console.log(`\n📝 Updating rate: ${currentRate}¢ → ${newRateCents}¢`);
 
-  // Обновляем
+  // Updating
   await updateRate(contract, BigInt(newRateCents), provider);
 
-  // Проверяем результат
+  // Checking result
   const updatedRate = await getCurrentRate(contract);
-  console.log(`\n✅ Новый RATE в контракте: ${updatedRate} cents ($${Number(updatedRate) / 100})`);
+  console.log(`\n✅ New RATE in contract: ${updatedRate} cents ($${Number(updatedRate) / 100})`);
 
-  // Показываем новые цены
+  // Showing new prices
   console.log('\n💰 Updated tier prices:');
   const tierPrices = [
     { name: 'FREE', usd: 0 },
@@ -198,12 +198,12 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('\n🎉 Готово!');
+  console.log('\n🎉 Done!');
 }
 
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('\n❌ Ошибка:', error.message);
+    console.error('\n❌ Error:', error.message);
     process.exit(1);
   });

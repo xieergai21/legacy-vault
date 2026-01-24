@@ -6,12 +6,12 @@
  * Entry point for exporting all public functions and contract types
  */
 
-// Экспорт основных функций контракта
+// Export main contract functions
 export {
-  // Инициализация
+  // Initialization
   constructor,
   
-  // Оракул
+  // Oracle
   updateRate,
   getRate,
   
@@ -27,22 +27,22 @@ export {
   updateHeartbeatInterval,
   updatePayload,
   
-  // Распределение наследства
+  // Inheritance distribution
   triggerDistribution,
   
-  // Чтение данных
+  // Read data
   getVault,
   getTierPrice,
   hasVault,
   getTimeUntilUnlock,
   
-  // Администрирование
+  // Administration
   withdrawFees,
   updateOracle,
   transferAdmin,
 } from './main';
 
-// Экспорт типов
+// Export types
 export {
   EventType,
   ErrorCode,
