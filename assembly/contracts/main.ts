@@ -1,12 +1,16 @@
 /**
- * LEGACY VAULT - AUTONOMOUS SMART CONTRACT v2
- * Decentralized version with dynamic pricing
+ * LEGACY VAULT - AUTONOMOUS SMART CONTRACT v2.1
+ * Decentralized version with dynamic pricing and distribution history
+ * 
+ * Changes v2.1:
+ * - Added distribution history for heirs (DISTRIBUTED_HEIR_PREFIX)
+ * - Heirs can now find all vaults that were distributed to them
  * 
  * Changes v2:
  * - Removed dependency on internal RATE for price validation
  * - Frontend passes tierPayment as separate argument
  * - Contract accepts payment and sends to admin
- * - RATE is used only for read-only functions (getTierPrice)
+ * - RATE used only for read-only functions (getTierPrice)
  */
 
 import {
@@ -40,6 +44,7 @@ const INITIALIZED_KEY: string = 'INIT';
 const DEFERRED_CALL_PREFIX: string = 'DC_';
 const HEIR_VAULTS_PREFIX: string = 'HEIR_';
 const DISTRIBUTED_PREFIX: string = 'DIST_';
+const DISTRIBUTED_HEIR_PREFIX: string = 'DISTHEIR_';
 const TOTAL_REVENUE_KEY: string = 'REVENUE';
 
 // Prices in USD cents (for reference, not for validation)
@@ -48,10 +53,10 @@ const TIER_PRICE_LIGHT: u64 = 999;      // $9.99
 const TIER_PRICE_VAULT_PRO: u64 = 2999; // $29.99
 const TIER_PRICE_LEGATE: u64 = 8999;    // $89.99
 
-// Minimum prices in MAS (protection from free usage of paid tiers)
-const MIN_TIER_PRICE_LIGHT: u64 = 1_000_000_000_000;     // 1000 MAS minimum
-const MIN_TIER_PRICE_VAULT_PRO: u64 = 3_000_000_000_000; // 3000 MAS minimum  
-const MIN_TIER_PRICE_LEGATE: u64 = 9_000_000_000_000;   // 9000 MAS minimum
+// Minimum prices in MAS (protection against free usage of paid tiers)
+const MIN_TIER_PRICE_LIGHT: u64 = 50_000_000_000;     // 50 MAS minimum
+const MIN_TIER_PRICE_VAULT_PRO: u64 = 150_000_000_000; // 150 MAS minimum  
+const MIN_TIER_PRICE_LEGATE: u64 = 450_000_000_000;   // 450 MAS minimum
 
 const MAX_HEIRS_FREE: u8 = 1;
 const MAX_HEIRS_LIGHT: u8 = 3;
@@ -75,11 +80,16 @@ export const TIER_LIGHT: u8 = 1;
 export const TIER_VAULT_PRO: u8 = 2;
 export const TIER_LEGATE: u8 = 3;
 
+// ===== KEY GENERATION FUNCTIONS =====
+
 function _getVaultKey(address: string): string { return VAULT_PREFIX + address; }
 function _getDeferredCallKey(address: string): string { return DEFERRED_CALL_PREFIX + address; }
 function _getHeirVaultsKey(heir: string): string { return HEIR_VAULTS_PREFIX + heir; }
 function _getDistributedKey(owner: string): string { return DISTRIBUTED_PREFIX + owner; }
+function _getDistributedHeirKey(heir: string): string { return DISTRIBUTED_HEIR_PREFIX + heir; }
 function _vaultExists(address: string): bool { return Storage.has(stringToBytes(_getVaultKey(address))); }
+
+// ===== RATE AND PRICING FUNCTIONS =====
 
 function _getMassaUsdRate(): u64 {
   const key = stringToBytes(RATE_KEY);
@@ -117,6 +127,8 @@ function _getMaxHeirs(tier: u8): u8 {
   return MAX_HEIRS_UNLIMITED;
 }
 
+// ===== ADMIN AND ORACLE FUNCTIONS =====
+
 function _getAdmin(): string {
   const key = stringToBytes(ADMIN_KEY);
   if (!Storage.has(key)) return '';
@@ -140,6 +152,8 @@ function _addRevenue(amount: u64): void {
   Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(current + amount));
 }
 
+// ===== VAULT STORAGE FUNCTIONS =====
+
 function _saveVault(owner: string, data: string): void { Storage.set(stringToBytes(_getVaultKey(owner)), stringToBytes(data)); }
 function _loadVault(owner: string): string { return bytesToString(Storage.get(stringToBytes(_getVaultKey(owner)))); }
 function _saveDeferredCallId(owner: string, callId: string): void { Storage.set(stringToBytes(_getDeferredCallKey(owner)), stringToBytes(callId)); }
@@ -155,6 +169,9 @@ function _deleteDeferredCallId(owner: string): void {
   if (Storage.has(key)) { Storage.del(key); }
 }
 
+// ===== HEIR TRACKING FUNCTIONS =====
+
+// Add vault to heir's active list
 function _addVaultToHeir(heir: string, owner: string): void {
   const key = stringToBytes(_getHeirVaultsKey(heir));
   let owners = '';
@@ -165,6 +182,7 @@ function _addVaultToHeir(heir: string, owner: string): void {
   }
 }
 
+// Remove vault from heir's active list
 function _removeVaultFromHeir(heir: string, owner: string): void {
   const key = stringToBytes(_getHeirVaultsKey(heir));
   if (!Storage.has(key)) return;
@@ -178,10 +196,24 @@ function _removeVaultFromHeir(heir: string, owner: string): void {
   else { Storage.del(key); }
 }
 
+// Add vault to heir's distribution history
+function _addDistributedToHeir(heir: string, owner: string): void {
+  const key = stringToBytes(_getDistributedHeirKey(heir));
+  let owners = '';
+  if (Storage.has(key)) { owners = bytesToString(Storage.get(key)); }
+  if (!owners.includes(owner)) {
+    owners = owners.length > 0 ? owners + ',' + owner : owner;
+    Storage.set(key, stringToBytes(owners));
+  }
+}
+
+// Save distribution info for owner
 function _saveDistributedAmount(owner: string, total: u64, perHeir: u64, heirsCount: i32): void {
   const data = total.toString() + '|' + perHeir.toString() + '|' + heirsCount.toString() + '|' + Context.timestamp().toString();
   Storage.set(stringToBytes(_getDistributedKey(owner)), stringToBytes(data));
 }
+
+// ===== DEFERRED CALL (ASC) FUNCTIONS =====
 
 function _timestampToPeriod(timestampMs: u64): u64 {
   const nowPeriod = currentPeriod();
@@ -210,6 +242,8 @@ function _cancelASC(ownerAddress: string): void {
   }
 }
 
+// ===== CONSTRUCTOR =====
+
 export function constructor(binaryArgs: StaticArray<u8>): void {
   assert(callerHasWriteAccess(), 'Unauthorized');
   const args = new Args(binaryArgs);
@@ -234,13 +268,15 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
   generateEvent('RATE_UPDATED:' + newRate.toString());
 }
 
+// ===== MAIN VAULT FUNCTIONS =====
+
 /**
  * createVault v2 - with explicit tier payment
  * 
- * Аргументы:
+ * Arguments:
  * - tier: u8
  * - heirsCount: u32
- * - heirs: string[] (heirsCount штук)
+ * - heirs: string[] (heirsCount items)
  * - interval: u64 (ms)
  * - payload: string
  * - arweaveTxId: string
@@ -296,24 +332,24 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   const keyResult = args.nextString();
   const encryptedKey = keyResult.isErr() ? '' : keyResult.unwrap();
   
-  // НОВОЕ: tierPayment передаётся явно от frontend
+  // tierPayment passed explicitly from frontend
   const tierPaymentResult = args.nextU64();
   let tierPayment: u64 = 0;
   
   if (tierPaymentResult.isOk()) {
     tierPayment = tierPaymentResult.unwrap();
   } else {
-    // Fallback: используем старую логику с RATE
+    // Fallback: use old logic with RATE
     tierPayment = _usdToMassa(_getTierPriceUsd(tier));
   }
   
-  // Minimum price check (protection from exploits)
+  // Check minimum price (protection against exploits)
   const minPrice = _getMinTierPriceMassa(tier);
   if (tier > 0) {
     assert(tierPayment >= minPrice, 'Payment below minimum');
   }
   
-  // Расчёт
+  // Calculation
   const totalDeductions = tierPayment + ORACLE_FEE + MIN_AS_DEPOSIT;
   assert(transferred >= totalDeductions, 'Insufficient funds');
   
@@ -322,7 +358,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     userBalance = transferred - totalDeductions; 
   }
   
-  // Отправляем оплату админу
+  // Send payment to admin
   if (tierPayment > 0) {
     const admin = _getAdmin();
     if (admin.length > 0) { 
@@ -392,6 +428,10 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   generateEvent('DEPOSIT:' + caller + ':' + amount.toString());
 }
 
+/**
+ * triggerDistribution - called by deferred call when vault unlocks
+ * Distributes funds to heirs and saves distribution history
+ */
 export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   const receivedCoins = Context.transferredCoins();
   if (receivedCoins < ORACLE_FEE) { generateEvent('TRIGGER_REJECTED:insufficient_gas'); return; }
@@ -432,7 +472,13 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   parts[5] = '0';
   _saveVault(owner, parts.join('|'));
   _deleteDeferredCallId(owner);
-  for (let i = 0; i < validHeirs.length; i++) { _removeVaultFromHeir(validHeirs[i], owner); }
+  
+  // Update heir tracking: move from active to distributed history
+  for (let i = 0; i < validHeirs.length; i++) { 
+    _addDistributedToHeir(validHeirs[i], owner);  // Add to distribution history
+    _removeVaultFromHeir(validHeirs[i], owner);   // Remove from active vaults
+  }
+  
   generateEvent('VAULT_UNLOCKED:' + owner);
   generateEvent('DISTRIBUTION_COMPLETE:' + owner + ':total=' + totalToDistribute.toString());
 }
@@ -539,6 +585,7 @@ export function getDeferredCallId(binaryArgs: StaticArray<u8>): StaticArray<u8> 
   return stringToBytes(_getDeferredCallId(owner));
 }
 
+// Get active vaults where address is listed as heir
 export function getVaultsForHeir(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const heir = args.nextString().unwrap();
@@ -547,6 +594,16 @@ export function getVaultsForHeir(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   return Storage.get(key);
 }
 
+// Get distributed vaults where address received inheritance
+export function getDistributedVaultsForHeir(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const heir = args.nextString().unwrap();
+  const key = stringToBytes(_getDistributedHeirKey(heir));
+  if (!Storage.has(key)) { return stringToBytes(''); }
+  return Storage.get(key);
+}
+
+// Get distribution info for a vault owner
 export function getDistributedInfo(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
