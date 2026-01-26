@@ -387,6 +387,9 @@ export function ping(binaryArgs: StaticArray<u8>): void {
   const parts = data.split('|');
   assert(parts.length >= 10, 'Invalid vault');
   assert(parts[4] == '1', 'Vault inactive');
+  const unlockDate = U64.parseInt(parts[1]);
+  const now = Context.timestamp();
+  assert(now < unlockDate, 'Vault expired, cannot ping');
   const interval = U64.parseInt(parts[2]);
   let currentBalance = U64.parseInt(parts[5]);
   let gasFunding: u64 = 0;
@@ -404,7 +407,6 @@ export function ping(binaryArgs: StaticArray<u8>): void {
     gasFunding = MIN_AS_DEPOSIT;
   }
   _cancelASC(caller);
-  const now = Context.timestamp();
   const newUnlockDate = now + interval;
   parts[1] = newUnlockDate.toString();
   parts[3] = now.toString();
@@ -422,6 +424,9 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   const data = _loadVault(caller);
   const parts = data.split('|');
   assert(parts[4] == '1', 'Vault inactive');
+  const unlockDate = U64.parseInt(parts[1]);
+  const now = Context.timestamp();
+  assert(now < unlockDate, 'Vault expired, cannot ping');
   const currentBalance = U64.parseInt(parts[5]);
   parts[5] = (currentBalance + amount).toString();
   _saveVault(caller, parts.join('|'));
