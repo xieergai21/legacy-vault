@@ -140,7 +140,7 @@ Annual subscriptions keep the protocol sustainable. A small AUM (Assets Under Ma
 | File Encryption | Zero-knowledge | AES-256 client-side, keys never transmitted |
 | File Storage | Decentralized | Arweave permanent storage |
 | Timer Execution | Autonomous | Massa ASC, no external dependencies |
-| Price Oracle | Semi-trusted | Admin-updated MAS/USD rate |
+| Price Feed | Real-time | CoinGecko API for MAS/USD conversion |
 
 ### What Legacy Vault Cannot Do
 
