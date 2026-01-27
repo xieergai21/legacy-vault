@@ -1,111 +1,226 @@
 # Legacy Vault 🔐
 
-> ⚠️ **Development Status: Beta on Massa Buildnet**
-> 
-> Smart contracts deployed on Massa Buildnet. **Do NOT use with significant funds** until mainnet release.
+**Decentralized Digital Inheritance on Massa Blockchain**
 
-**Decentralized Inheritance Management on Massa Blockchain**
-
-Legacy Vault is a trustless dead man's switch protocol that enables autonomous asset transfer and encrypted file inheritance.
+Legacy Vault is an autonomous dead man's switch protocol for secure cryptocurrency and digital asset inheritance. Using Massa's unique Autonomous Smart Contracts (ASC), your assets are automatically transferred to designated heirs if you fail to check in within a specified interval — no intermediaries, no trust required.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Massa Network](https://img.shields.io/badge/Massa-Buildnet-blue)](https://massa.net)
-[![Contract](https://img.shields.io/badge/Contract-v3.1-green)]()
+[![Massa Network](https://img.shields.io/badge/Network-Massa-blue)](https://massa.net)
+[![Contract Version](https://img.shields.io/badge/Contract-v3.1-green)]()
+[![App](https://img.shields.io/badge/App-Live-brightgreen)](https://app.legacy-vault.xyz)
+
+> ⚠️ **Beta on Massa Buildnet** — Do not use with significant funds until mainnet release.
 
 ---
 
-## What's New in v3.1
+## The Problem
 
-- **Annual Subscription Model** — Pay yearly instead of one-time
-- **AUM Fees** — Small percentage fee on vault balance (0.25-1% annually)
-- **USDC Payment Support** — Pay subscriptions in USDC.e stablecoin
-- **Vault Freeze** — Expired subscriptions freeze vault until renewed
-- **Tier-based Limits** — Message and file storage limits per plan
+Every year, billions of dollars in cryptocurrency become permanently inaccessible:
+
+- **No succession planning** — Private keys die with their owners
+- **Centralized solutions fail** — Exchanges freeze accounts, lose keys, or shut down
+- **Legal complexity** — Probate takes months, courts don't understand crypto
+- **Trust requirements** — Existing solutions require trusting third parties
+
+**Legacy Vault solves this with trustless, autonomous on-chain execution.**
 
 ---
 
 ## How It Works
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      LEGACY VAULT                           │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   1. Owner creates vault with heirs and check-in interval   │
+│                           │                                 │
+│                           ▼                                 │
+│   ┌─────────────┐    Ping every    ┌─────────────┐         │
+│   │   ACTIVE    │◄────────────────►│   OWNER     │         │
+│   │   VAULT     │    N days        │   ALIVE     │         │
+│   └─────────────┘                  └─────────────┘         │
+│           │                                                 │
+│           │ No ping received                                │
+│           ▼                                                 │
+│   ┌─────────────┐                  ┌─────────────┐         │
+│   │  UNLOCKED   │─────────────────►│   HEIRS     │         │
+│   │   STATE     │  Auto-transfer   │   RECEIVE   │         │
+│   └─────────────┘                  └─────────────┘         │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
 
-1. **Create Vault** — Select tier, define heirs, set check-in interval
-2. **Deposit Assets** — Add MAS tokens and encrypted files
-3. **Regular Check-ins** — Confirm you're alive (ping transaction)
-4. **Automatic Execution** — If check-in missed, heirs claim inheritance
+### Step by Step
 
-The protocol uses Massa's **Autonomous Smart Contracts** (ASC) to execute without external triggers.
+1. **Create Vault** — Choose tier, set check-in interval (1-365 days), add heir addresses
+2. **Fund Vault** — Deposit MAS tokens for inheritance
+3. **Upload Files** (PRO/LEGATE) — Encrypted files stored permanently on Arweave
+4. **Regular Pings** — Confirm you're alive with a simple transaction
+5. **Automatic Inheritance** — If you miss the deadline, heirs can claim assets
 
 ---
 
-## Pricing
+## Subscription Plans
 
 | Feature | FREE | LIGHT | VAULT PRO | LEGATE |
 |---------|------|-------|-----------|--------|
-| **Annual Price** | $0 | $9.99/year | $29.99/year | $89.99/year |
+| **Annual Price** | $0 | $9.99 | $29.99 | $89.99 |
 | **AUM Fee** | 0% | 1% | 0.5% | 0.25% |
-| **Heirs** | 1 | Up to 3 | Up to 10 | Unlimited |
-| **Message** | 25 chars | 1 KB | 2 KB | 2 KB |
+| **Max Heirs** | 1 | 3 | 10 | Unlimited |
+| **Max Balance** | 10K MAS | 200K MAS | 2M MAS | Unlimited |
+| **Message Storage** | 25 chars | 1 KB | 2 KB | 2 KB |
 | **File Storage** | — | — | 50 MB | 1 GB |
-| **Email Alerts** | — | ✓ | ✓ | ✓ |
 | **AES-256 Encryption** | ✓ | ✓ | ✓ | ✓ |
+| **Email Alerts** | — | ✓ | ✓ | ✓ |
+
+### Payment Options
+
+- **MAS** — Native Massa token (price calculated via oracle)
+- **USDC.e** — Bridged USDC stablecoin on Massa
+
+---
+
+## Key Features
+
+### Autonomous Smart Contracts (ASC)
+Unlike traditional smart contracts that require external triggers, Massa's ASC technology enables truly autonomous execution. Your vault automatically unlocks when the timer expires — no keepers, no bots, no third parties.
+
+### Client-Side Encryption
+All sensitive data is encrypted in your browser using AES-256 before being stored. Encryption keys never leave your device. Only you and your designated heirs can decrypt the contents.
+
+### Permanent File Storage
+Files are stored on Arweave — a decentralized permanent storage network. Once uploaded, files exist forever and cannot be deleted or censored.
+
+### Subscription Model with AUM Fees
+Annual subscriptions keep the protocol sustainable. A small AUM (Assets Under Management) fee is collected proportionally from vault balances during ping operations.
 
 ---
 
 ## Smart Contract
 
-**Buildnet Address:** `AS1qj32F95nHt93svdvt94AXFeXdV5GfEMcwXmCoN3ALkaEvMQN8`
+### Deployed Addresses
 
-### Key Functions
-```typescript
-// Create vault with MAS payment
-createVault(tier, heirs, interval, payload, arweaveId, encKey)
+| Network | Address | Status |
+|---------|---------|--------|
+| Buildnet | `AS1qj32F95nHt93svdvt94AXFeXdV5GfEMcwXmCoN3ALkaEvMQN8` | Active |
+| Mainnet | Coming soon | — |
 
-// Create vault with USDC payment
-createVaultWithUsdc(tier, heirs, interval, payload, arweaveId, encKey)
+### Core Functions
 
-// Owner check-in (resets timer)
-ping()
+**Vault Management**
+- `createVault()` — Create vault with MAS payment
+- `createVaultWithUsdc()` — Create vault with USDC payment
+- `ping()` — Check-in to reset timer
+- `deposit()` — Add funds to vault
+- `deactivateVault()` — Close vault and withdraw funds
 
-// Renew subscription (MAS or USDC)
-renewSubscription()
-renewSubscriptionWithUsdc()
+**Subscription**
+- `renewSubscription()` — Renew with MAS
+- `renewSubscriptionWithUsdc()` — Renew with USDC
 
-// Heir claims inheritance
-claimInheritance(ownerAddress)
-claimInheritanceWithUsdc(ownerAddress)
+**Inheritance**
+- `claimInheritance()` — Heir claims after unlock
+- `claimInheritanceWithUsdc()` — Heir pays expired subscription with USDC
 
-// Deactivate and withdraw
-deactivateVault()
-```
+**Read Functions**
+- `getVault()` — Get vault data
+- `getVaultsAsHeir()` — Get vaults where address is heir
+- `getTierPrice()` — Get subscription price
+- `getSubscriptionPriceUsdc()` — Get USDC price
 
 ---
 
 ## Security Model
 
+### Trust Assumptions
+
 | Component | Trust Level | Description |
 |-----------|-------------|-------------|
 | Smart Contract | Trustless | Open source, verifiable on-chain |
-| File Encryption | Client-side | AES-256, keys never leave device |
+| File Encryption | Zero-knowledge | AES-256 client-side, keys never transmitted |
 | File Storage | Decentralized | Arweave permanent storage |
-| Check-in Logic | Autonomous | Massa ASC, no server needed |
+| Timer Execution | Autonomous | Massa ASC, no external dependencies |
+| Price Oracle | Semi-trusted | Admin-updated MAS/USD rate |
 
-### What We Don't Have Access To
+### What Legacy Vault Cannot Do
 
-- Your private keys
-- Your decryption keys
-- Ability to pause/stop your vault
-- Ability to redirect inheritance
+- Access your private keys
+- Decrypt your files
+- Stop or pause your vault
+- Redirect your inheritance
+- Recover lost encryption keys
+
+### Heir Security
+
+Heirs are identified by their Massa wallet address. To claim inheritance:
+1. Vault must be unlocked (owner missed check-in)
+2. Heir must sign transaction with their wallet
+3. If subscription expired, heir can pay to unlock
+
+No one except designated heirs can claim — enforced by smart contract.
+
+---
+
+## Technical Architecture
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        FRONTEND                             │
+│                   React + TypeScript                        │
+│                  Hosted on Cloudflare                       │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────────────┐
+│                   MASSA BLOCKCHAIN                          │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              Legacy Vault Contract                   │   │
+│  │  - Vault storage and management                      │   │
+│  │  - ASC deferred calls for auto-unlock               │   │
+│  │  - USDC integration via transferFrom                │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                      │
+┌─────────────────────▼───────────────────────────────────────┐
+│                     ARWEAVE                                 │
+│              Permanent encrypted file storage               │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Links
 
-- **App:** https://app.legacy-vault.xyz
-- **Landing:** https://legacy-vault.xyz
-- **Twitter:** https://twitter.com/legacyvault_xyz
-- **Telegram:** https://t.me/legacyvault
-- **Email:** key@legacy-vault.xyz
+| Resource | URL |
+|----------|-----|
+| Web App | https://app.legacy-vault.xyz |
+| Landing Page | https://legacy-vault.xyz |
+| Twitter | https://twitter.com/legacyvault_xyz |
+| Telegram | https://t.me/legacyvault |
+| Email | key@legacy-vault.xyz |
+
+---
+
+## Development
+```bash
+# Clone repository
+git clone https://github.com/xieergai21/legacy-vault.git
+cd legacy-vault
+
+# Install dependencies
+npm install
+
+# Build contract
+npm run build
+
+# Deploy to buildnet
+npx ts-node scripts/deploy.ts
+```
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file.
+MIT License — see [LICENSE](LICENSE) file.
+
+---
+
+**Built with ❤️ on Massa Blockchain**
