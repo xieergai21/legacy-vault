@@ -161,6 +161,25 @@ No one except designated heirs can claim — enforced by smart contract.
 
 ---
 
+
+---
+
+## Email Notifications
+
+LIGHT, PRO, and LEGATE tiers include email alerts for critical vault events:
+
+- **Vault Expiration Warning** — Reminder sent before unlock date
+- **Subscription Expiring** — Alert when annual subscription needs renewal
+- **Inheritance Available** — Notification to heirs when vault unlocks
+
+### Setup
+
+1. Go to vault dashboard
+2. Click "Notification Settings"
+3. Enter email addresses for owner and heirs
+4. Verify email via confirmation link
+
+Email service powered by Resend. Notifications are optional and can be disabled anytime.
 ## Technical Architecture
 ```
 ┌─────────────────────────────────────────────────────────────┐
