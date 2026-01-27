@@ -300,6 +300,8 @@ Legacy Vault is experimental software. While we strive for security and reliabil
 
 ## 📬 Contact
 
+- Email: [key@legacy-vault.xyz](mailto:key@legacy-vault.xyz)
+
 - GitHub: [github.com/xieergai21/legacy-vault](https://github.com/xieergai21/legacy-vault)
 - Telegram: [t.me/legacyvault](https://t.me/legacyvault)
 - Medium: [medium.com/@legacy-vault](https://medium.com/@legacy-vault)
