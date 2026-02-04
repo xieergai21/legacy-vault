@@ -52,6 +52,8 @@ const DISTRIBUTED_PREFIX: string = 'DIST_';
 const DISTRIBUTED_HEIR_PREFIX: string = 'DISTHEIR_';
 const TOTAL_REVENUE_KEY: string = 'REVENUE';
 const TOTAL_AUM_FEES_KEY: string = 'AUM_FEES';
+const TOTAL_VAULT_BALANCES_KEY: string = 'VAULT_BALANCES';
+const TOTAL_LOCKED_GAS_KEY: string = 'LOCKED_GAS';
 const USDC_CONTRACT: string = "AS1hCJXjndR4c9vekLWsXGnrdigp4AaZ7uYG3UKFzzKnWVsrNLPJ";
 const USDC_DECIMALS: u64 = 1_000_000; // USDC has 6 decimals
 
@@ -276,6 +278,39 @@ function _addRevenue(amount: u64): void {
 function _addAumFees(amount: u64): void {
   const current = _getTotalAumFees();
   Storage.set(stringToBytes(TOTAL_AUM_FEES_KEY), u64ToBytes(current + amount));
+}
+
+// Track total vault balances
+function _getTotalVaultBalances(): u64 {
+  const key = stringToBytes(TOTAL_VAULT_BALANCES_KEY);
+  if (!Storage.has(key)) return 0;
+  return bytesToU64(Storage.get(key));
+}
+function _addVaultBalance(amount: u64): void {
+  const current = _getTotalVaultBalances();
+  Storage.set(stringToBytes(TOTAL_VAULT_BALANCES_KEY), u64ToBytes(current + amount));
+}
+function _subtractVaultBalance(amount: u64): void {
+  const current = _getTotalVaultBalances();
+  const newVal = amount > current ? 0 : current - amount;
+  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(newVal));
+  Storage.set(stringToBytes(TOTAL_VAULT_BALANCES_KEY), u64ToBytes(newVal));
+}
+
+// Track locked gas for ASCs
+function _getTotalLockedGas(): u64 {
+  const key = stringToBytes(TOTAL_LOCKED_GAS_KEY);
+  if (!Storage.has(key)) return 0;
+  return bytesToU64(Storage.get(key));
+}
+function _addLockedGas(amount: u64): void {
+  const current = _getTotalLockedGas();
+  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(current + amount));
+}
+function _subtractLockedGas(amount: u64): void {
+  const current = _getTotalLockedGas();
+  const newVal = amount > current ? 0 : current - amount;
+  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(newVal));
 }
 
 function _saveVault(owner: string, data: string): void { 
@@ -607,6 +642,8 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   
   // Schedule ASC
   _scheduleASC(caller, unlockDate, requiredGasDeposit);
+  _addVaultBalance(userBalance);
+  _addLockedGas(requiredGasDeposit);
   
   generateEvent('VAULT_CREATED:' + caller + ':tier=' + tier.toString() + ':unlockDate=' + unlockDate.toString() + ':subscriptionExpiry=' + subscriptionExpiry.toString());
 }
@@ -717,6 +754,7 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   
   parts[5] = newBalance.toString();
   _saveVault(caller, parts.join('|'));
+  _addVaultBalance(amount);
   
   generateEvent('DEPOSIT:' + caller + ':' + amount.toString());
 }
@@ -838,6 +876,8 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
     if (heirsArray[i].length > 0) _addVaultToHeir(heirsArray[i], caller);
   }
   _scheduleASC(caller, unlockDate, requiredGasDeposit);
+  _addVaultBalance(userBalance);
+  _addLockedGas(requiredGasDeposit);
   generateEvent('VAULT_CREATED_USDC:' + caller + ':tier=' + tier.toString());
 }
 
@@ -1099,6 +1139,11 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
     _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected);
   }
   
+  // Update totals
+  const interval = U64.parseInt(parts[2]);
+  const lockedGas = _calcRequiredGasDeposit(interval);
+  _subtractVaultBalance(vaultBalance);
+  _subtractLockedGas(lockedGas);
   // Deactivate vault
   parts[4] = '0';
   parts[5] = '0';
@@ -1149,6 +1194,11 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
     if (heirs[i].length > 0) _removeVaultFromHeir(heirs[i], caller);
   }
   
+  // Update totals
+  const interval = U64.parseInt(parts[2]);
+  const lockedGas = _calcRequiredGasDeposit(interval);
+  _subtractVaultBalance(vaultBalance);
+  _subtractLockedGas(lockedGas);
   parts[4] = '0';
   parts[5] = '0';
   _saveVault(caller, parts.join('|'));
@@ -1348,6 +1398,23 @@ export function getTotalAumFees(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
   return u64ToBytes(_getTotalAumFees());
 }
 
+export function getTotalVaultBalances(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  return u64ToBytes(_getTotalVaultBalances());
+}
+
+export function getTotalLockedGas(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  return u64ToBytes(_getTotalLockedGas());
+}
+
+export function getAdminWithdrawable(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  // Available = tracked revenue (subscriptions + excess)
+  const vaultBalances = _getTotalVaultBalances();
+  const lockedGas = _getTotalLockedGas();
+  const revenue = _getTotalRevenue();
+  const available = revenue;
+  return u64ToBytes(available);
+}
+
 export function hasVault(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
@@ -1425,15 +1492,20 @@ export function adminWithdraw(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const amount = args.nextU64().unwrap();
   
-  // SECURITY: Only allow withdrawing protocol revenue, not user funds!
-  const availableRevenue = _getTotalRevenue();
-  assert(amount <= availableRevenue, 'Cannot withdraw more than protocol revenue');
+  // Calculate what admin can withdraw:
+  // contractBalance - vaultBalances - lockedGas = available for admin
+  // Available = tracked revenue (subscriptions + excess)
+  const vaultBalances = _getTotalVaultBalances();
+  const lockedGas = _getTotalLockedGas();
   
-  // Subtract from tracked revenue
+  const revenue = _getTotalRevenue();
+  const available = revenue;
+  
+  assert(amount <= available, 'Cannot withdraw user funds or locked gas');
+  
   _subtractRevenue(amount);
-  
   transferCoins(new Address(caller), amount);
-  generateEvent('ADMIN_WITHDRAW:' + amount.toString() + ':remaining=' + (_getTotalRevenue()).toString());
+  generateEvent('ADMIN_WITHDRAW:' + amount.toString() + ':available=' + available.toString() + ':vaultBalances=' + vaultBalances.toString() + ':lockedGas=' + lockedGas.toString());
 }
 
 export function manualTrigger(binaryArgs: StaticArray<u8>): void {
