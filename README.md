@@ -6,7 +6,7 @@ Legacy Vault is an autonomous dead man's switch protocol for secure cryptocurren
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Massa Network](https://img.shields.io/badge/Network-Massa-blue)](https://massa.net)
-[![Contract Version](https://img.shields.io/badge/Contract-v3.1-green)]()
+[![Contract Version](https://img.shields.io/badge/Contract-v4.0-green)]()
 [![App](https://img.shields.io/badge/App-Live-brightgreen)](https://app.legacy-vault.xyz)
 
 > ⚠️ **Beta on Massa Buildnet** — Do not use with significant funds until mainnet release.
@@ -77,6 +77,42 @@ Every year, billions of dollars in cryptocurrency become permanently inaccessibl
 
 - **MAS** — Native Massa token (price calculated via oracle)
 - **USDC.e** — Bridged USDC stablecoin on Massa
+
+---
+
+## Gas & Network Fees
+
+### Dynamic Gas Calculation
+
+Gas fees are calculated dynamically based on your check-in interval. Longer intervals require more gas to fund the chain of Autonomous Smart Contract (ASC) calls.
+
+**Formula:** `ceil(interval_days / 6) × 1.21 MAS + 3 MAS buffer + 0.01 MAS oracle fee`
+
+| Interval | ASC Calls | Gas Fee |
+|----------|-----------|---------|
+| 5 min (test) | 1 | 4.22 MAS |
+| 1 day | 1 | 4.22 MAS |
+| 7 days | 2 | 5.43 MAS |
+| 14 days | 3 | 6.64 MAS |
+| 30 days | 5 | 9.06 MAS |
+| 90 days | 15 | 21.16 MAS |
+| 180 days | 30 | 39.31 MAS |
+| 1 year | 61 | 76.82 MAS |
+
+### Why ASC Chains?
+
+Massa's deferred calls have a maximum scheduling window of ~7 days. For longer intervals, Legacy Vault creates a chain of ASC calls that reschedule themselves until the unlock date is reached.
+
+### Who Pays What?
+
+| Fee Type | Paid By | When |
+|----------|---------|------|
+| **Subscription** | Owner | At vault creation |
+| **Gas + Network** | Owner | At creation & each ping |
+| **AUM Fee** | Owner | At each ping |
+| **Claim Gas** | Heir | When claiming inheritance |
+
+> 💡 **Important:** AUM fees and gas are paid by the vault owner, NOT deducted from the inheritance balance. Your heirs receive the full deposited amount.
 
 ---
 
