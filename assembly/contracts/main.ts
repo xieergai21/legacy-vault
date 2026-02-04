@@ -103,12 +103,28 @@ const MAX_PAYLOAD_PRO: u32 = 2048;
 const MAX_PAYLOAD_LEGATE: u32 = 5120;
 
 // Other constants
-const MIN_HEARTBEAT_INTERVAL: u64 = 86400000; // 1 day in ms
+const MIN_HEARTBEAT_INTERVAL: u64 = 300000; // 5 min for testing // 1 day in ms
 const PERIOD_DURATION_MS: u64 = 16000;
 
-export const MIN_AS_DEPOSIT: u64 = 5 * MASSA_DECIMALS; // 5 MAS for ASC gas
 export const ORACLE_FEE: u64 = 10_000_000; // 0.01 MAS
 export const DEFERRED_CALL_GAS: u64 = 100_000_000;
+export const MAX_DEFERRED_INTERVAL: u64 = 6 * 24 * 60 * 60 * 1000; // 6 days max for deferred call
+export const DEFERRED_CALL_COST: u64 = 1_210_000_000; // 1.21 MAS per call (1.05 + 15%)
+export const GAS_BUFFER: u64 = 3 * MASSA_DECIMALS; // 3 MAS extra buffer
+
+// Calculate required gas deposit based on interval
+export function _calcRequiredGasDeposit(intervalMs: u64): u64 {
+  const numCalls = (intervalMs + MAX_DEFERRED_INTERVAL - 1) / MAX_DEFERRED_INTERVAL; // ceil division
+  return numCalls * DEFERRED_CALL_COST + GAS_BUFFER;
+}
+
+// Public function to get gas estimate for frontend
+export function getRequiredGasDeposit(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const intervalMs = args.nextU64().unwrap();
+  const required = _calcRequiredGasDeposit(intervalMs);
+  return new Args().add(required).serialize();
+}
 
 // Tiers
 export const TIER_FREE: u8 = 0;
@@ -241,6 +257,16 @@ function _getTotalAumFees(): u64 {
   if (!Storage.has(key)) return 0;
   return bytesToU64(Storage.get(key));
 }
+
+function _subtractRevenue(amount: u64): void {
+  const current = _getTotalRevenue();
+  if (amount > current) {
+    Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(0));
+  } else {
+    Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(current - amount));
+  }
+}
+
 
 function _addRevenue(amount: u64): void {
   const current = _getTotalRevenue();
@@ -382,13 +408,19 @@ function _timestampToPeriod(timestampMs: u64): u64 {
 function _scheduleASC(ownerAddress: string, unlockTimestamp: u64, gasDeposit: u64): void {
   const thisContract = Context.callee().toString();
   const args = new Args().add(ownerAddress);
-  const targetPeriod = _timestampToPeriod(unlockTimestamp);
+  
+  // Limit to max 6 days due to Massa deferred call limit (7 days max)
+  const now = Context.timestamp();
+  const maxAllowedTimestamp = now + MAX_DEFERRED_INTERVAL;
+  const targetTimestamp = unlockTimestamp < maxAllowedTimestamp ? unlockTimestamp : maxAllowedTimestamp;
+  
+  const targetPeriod = _timestampToPeriod(targetTimestamp);
   const targetThread = currentThread();
   const targetSlot = new Slot(targetPeriod, targetThread);
   const callId = deferredCallRegister(thisContract, 'triggerDistribution', targetSlot,
   DEFERRED_CALL_GAS, args.serialize(), gasDeposit);
   _saveDeferredCallId(ownerAddress, callId);
-  generateEvent('ASC_SCHEDULED:' + ownerAddress + ':period=' + targetPeriod.toString());
+  generateEvent('ASC_SCHEDULED:' + ownerAddress + ':period=' + targetPeriod.toString() + ':target=' + targetTimestamp.toString());
 }
 
 function _cancelASC(ownerAddress: string): void {
@@ -444,7 +476,7 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
  * - encryptedKey: string
  * - subscriptionPayment: u64 (subscription payment in nanoMAS)
  * 
- * Transferred coins = subscriptionPayment + MIN_AS_DEPOSIT + ORACLE_FEE + userBalance
+ * Transferred coins = subscriptionPayment + requiredGasDeposit + ORACLE_FEE + userBalance
  */
 export function createVault(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -458,7 +490,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   }
   
   const transferred = Context.transferredCoins();
-  assert(transferred >= MIN_AS_DEPOSIT, 'Send at least 5 MAS');
+  // Early check removed - will check after parsing interval
   
   const args = new Args(binaryArgs);
   const tier = args.nextU8().unwrap();
@@ -481,7 +513,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   
   // Parse interval
   const interval = args.nextU64().unwrap();
-  assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short (min 1 day)');
+  assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short (min 5 min)');
   
   // Parse payload
   const payloadResult = args.nextString();
@@ -516,9 +548,10 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     assert(subscriptionPayment >= minSubscription, 'Payment below minimum');
   }
   
-  // Calculate amounts
-  const totalDeductions = subscriptionPayment + ORACLE_FEE + MIN_AS_DEPOSIT;
-  assert(transferred >= totalDeductions, 'Insufficient funds');
+  // Calculate amounts - gas depends on interval
+  const requiredGasDeposit = _calcRequiredGasDeposit(interval);
+  const totalDeductions = subscriptionPayment + ORACLE_FEE + requiredGasDeposit;
+  assert(transferred >= totalDeductions, 'Insufficient funds for subscription + gas');
   
   let userBalance: u64 = 0;
   if (transferred > totalDeductions) {
@@ -573,7 +606,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   }
   
   // Schedule ASC
-  _scheduleASC(caller, unlockDate, MIN_AS_DEPOSIT);
+  _scheduleASC(caller, unlockDate, requiredGasDeposit);
   
   generateEvent('VAULT_CREATED:' + caller + ':tier=' + tier.toString() + ':unlockDate=' + unlockDate.toString() + ':subscriptionExpiry=' + subscriptionExpiry.toString());
 }
@@ -600,42 +633,52 @@ export function ping(_binaryArgs: StaticArray<u8>): void {
   // Check subscription
   assert(_isSubscriptionActive(parts, now), 'SUBSCRIPTION_EXPIRED');
   
-  // Collect AUM fee first
-  const feeCollected = _collectAumFee(parts, now);
-  if (feeCollected > 0) {
-    generateEvent('AUM_FEE_COLLECTED:' + caller + ':' + feeCollected.toString());
+  // Calculate AUM fee (owner pays, not from vault balance)
+  const tier = U8.parseInt(parts[0]);
+  const feeBps = _getAumFeeBps(tier);
+  const balance = U64.parseInt(parts[5]);
+  const lastCollection = U64.parseInt(parts[11]);
+  const aumFee = _calculateAumFee(balance, feeBps, lastCollection, now);
+  // Process gas/deposit - owner MUST pay gas, never take from inheritance
+  const interval = U64.parseInt(parts[2]);
+  // balance already defined above
+  
+  // Calculate required gas based on interval
+  const requiredGas = _calcRequiredGasDeposit(interval);
+  const minRequired = requiredGas + ORACLE_FEE + aumFee;
+  
+  assert(transferred >= minRequired, 'Must pay gas + AUM fee');
+  
+  const gasFunding = requiredGas;
+  
+  // Any excess stays in contract as protocol revenue
+  if (transferred > minRequired) {
+    const excess = transferred - minRequired;
+    _addRevenue(excess);
+    generateEvent('EXCESS_TO_REVENUE:' + caller + ':' + excess.toString());
   }
   
-  // Process gas/deposit
-  const interval = U64.parseInt(parts[2]);
-  let currentBalance = U64.parseInt(parts[5]);
-  let gasFunding: u64 = 0;
-  
-  if (transferred >= MIN_AS_DEPOSIT + ORACLE_FEE) {
-    gasFunding = MIN_AS_DEPOSIT;
-    currentBalance += transferred - MIN_AS_DEPOSIT - ORACLE_FEE;
-  } else if (transferred >= ORACLE_FEE) {
-    assert(currentBalance >= MIN_AS_DEPOSIT, 'Insufficient balance for gas');
-    currentBalance -= MIN_AS_DEPOSIT;
-    currentBalance += transferred - ORACLE_FEE;
-    gasFunding = MIN_AS_DEPOSIT;
-  } else {
-    assert(currentBalance >= MIN_AS_DEPOSIT + ORACLE_FEE, 'Insufficient balance');
-    currentBalance -= (MIN_AS_DEPOSIT + ORACLE_FEE);
-    gasFunding = MIN_AS_DEPOSIT;
+  // Transfer AUM fee to admin (paid by owner, not from vault)
+  if (aumFee > 0) {
+    const admin = _getAdmin();
+    if (admin.length > 0) {
+      transferCoins(new Address(admin), aumFee);
+      _addAumFees(aumFee);
+    }
+    parts[11] = now.toString(); // Update lastFeeCollection
+    generateEvent("AUM_FEE_COLLECTED:" + caller + ":" + aumFee.toString());
   }
   
   // Check max balance
-  const tier = U8.parseInt(parts[0]);
   const maxBalance = _getMaxBalance(tier);
-  assert(currentBalance <= maxBalance, 'Balance exceeds tier limit');
+  assert(balance <= maxBalance, 'Balance exceeds tier limit');
   
   _cancelASC(caller);
   
   const newUnlockDate = now + interval;
   parts[1] = newUnlockDate.toString();
   parts[3] = now.toString(); // lastPing
-  parts[5] = currentBalance.toString();
+  parts[5] = balance.toString(); // Balance unchanged - owner paid AUM fee
   
   _saveVault(caller, parts.join('|'));
   _scheduleASC(caller, newUnlockDate, gasFunding);
@@ -775,7 +818,8 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   }
   
   const transferred = Context.transferredCoins();
-  const minGas = MIN_AS_DEPOSIT + ORACLE_FEE;
+  const requiredGasDeposit = _calcRequiredGasDeposit(interval);
+  const minGas = requiredGasDeposit + ORACLE_FEE;
   assert(transferred >= minGas, 'Insufficient MAS for gas');
   const userBalance = transferred - minGas;
   
@@ -793,7 +837,7 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   for (let i = 0; i < heirsArray.length; i++) {
     if (heirsArray[i].length > 0) _addVaultToHeir(heirsArray[i], caller);
   }
-  _scheduleASC(caller, unlockDate, MIN_AS_DEPOSIT);
+  _scheduleASC(caller, unlockDate, requiredGasDeposit);
   generateEvent('VAULT_CREATED_USDC:' + caller + ':tier=' + tier.toString());
 }
 
@@ -926,7 +970,10 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   const unlockDate = U64.parseInt(parts[1]);
   
   if (now < unlockDate) {
-    generateEvent('TRIGGER_SKIPPED:not_yet');
+    // Not yet time - reschedule for next check (chain of deferred calls)
+    // Use received coins for gas deposit of next call
+    _scheduleASC(owner, unlockDate, receivedCoins);
+    generateEvent('ASC_RESCHEDULED:' + owner + ':nextCheck=' + (now + MAX_DEFERRED_INTERVAL).toString() + ':unlockDate=' + unlockDate.toString());
     return;
   }
   
@@ -1374,10 +1421,19 @@ export function transferAdmin(binaryArgs: StaticArray<u8>): void {
 export function adminWithdraw(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(caller == _getAdmin(), 'Only admin');
+  
   const args = new Args(binaryArgs);
   const amount = args.nextU64().unwrap();
+  
+  // SECURITY: Only allow withdrawing protocol revenue, not user funds!
+  const availableRevenue = _getTotalRevenue();
+  assert(amount <= availableRevenue, 'Cannot withdraw more than protocol revenue');
+  
+  // Subtract from tracked revenue
+  _subtractRevenue(amount);
+  
   transferCoins(new Address(caller), amount);
-  generateEvent('ADMIN_WITHDRAW:' + amount.toString());
+  generateEvent('ADMIN_WITHDRAW:' + amount.toString() + ':remaining=' + (_getTotalRevenue()).toString());
 }
 
 export function manualTrigger(binaryArgs: StaticArray<u8>): void {
