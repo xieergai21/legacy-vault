@@ -1515,6 +1515,18 @@ export function adminWithdrawGasExcess(binaryArgs: StaticArray<u8>): void {
   transferCoins(new Address(caller), amount);
   generateEvent('ADMIN_GAS_EXCESS_WITHDRAW:' + amount.toString() + ':remaining=' + _getGasExcess().toString());
 }
+// Emergency withdraw for admin - withdraws free balance not tied to any vault
+export function adminEmergencyWithdraw(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  assert(caller == _getAdmin(), 'Only admin');
+  
+  const args = new Args(binaryArgs);
+  const amount = args.nextU64().unwrap();
+  
+  transferCoins(new Address(caller), amount);
+  generateEvent('ADMIN_EMERGENCY_WITHDRAW:' + amount.toString());
+}
+
 
 export function manualTrigger(binaryArgs: StaticArray<u8>): void {
   triggerDistribution(binaryArgs);
