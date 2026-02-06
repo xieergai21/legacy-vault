@@ -1,7 +1,12 @@
 node_modules/
-frontend/node_modules/
 build/
-dist/
 .env
+deweb/
 deweb-backup/
+frontend/
+check-*.ts
+check_vault.*
+deactivate-old.ts
+decode-admin.ts
+force-deactivate.ts
 *.js.map
