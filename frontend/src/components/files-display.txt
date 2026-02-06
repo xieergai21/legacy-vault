@@ -1,0 +1,22 @@
+
+          {files.length > 0 && (
+            <div style={{ marginTop: '16px' }}>
+              {files.map((file, idx) => (
+                <div key={idx} style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  backgroundColor: '#252529',
+                  borderRadius: '8px',
+                  marginBottom: '8px',
+                }}>
+                  <span style={{ color: '#F0F0F2', fontSize: '13px' }}>{file.name}</span>
+                  <button
+                    onClick={() => setFiles(files.filter((_, i) => i !== idx))}
+                    style={{ background: 'none', border: 'none', color: '#F87171', cursor: 'pointer' }}
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}

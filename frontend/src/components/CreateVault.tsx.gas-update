@@ -1,0 +1,440 @@
+import { useState } from 'react';
+import {
+  TIER_NAMES,
+  SUBSCRIPTION_PRICES_USD,
+  MIN_SUBSCRIPTION_MAS,
+  AUM_FEE_PERCENT,
+  MAX_BALANCE_MAS,
+  MAX_HEIRS,
+  calculateRequiredGas,
+  ONE_DAY_MS,
+  ORACLE_FEE,
+} from '../utils/contract';
+
+interface CreateVaultProps {
+  onSubmit: (
+    tier: number,
+    heirs: string[],
+    intervalDays: number,
+    payload: string,
+    totalAmount: number,
+    subscriptionPaymentMas: number
+  ) => Promise<string | void>;
+  onUpdatePayload?: (payload: string, arweaveTxId: string, encryptedKey: string) => Promise<string | void>;
+  loading: boolean;
+  massaAddress: string;
+  masPrice: number;
+  usdToMas: (usd: number) => number;
+}
+
+export function CreateVault({ onSubmit, loading, masPrice, usdToMas }: CreateVaultProps) {
+  const [tier, setTier] = useState(1);
+  const [heirs, setHeirs] = useState(['']);
+  const [intervalDays, setIntervalDays] = useState(30);
+  const [message, setMessage] = useState('');
+  const [depositAmount, setDepositAmount] = useState('100');
+
+  const subscriptionPriceUsd = SUBSCRIPTION_PRICES_USD[tier];
+  const subscriptionPriceMas = usdToMas(subscriptionPriceUsd);
+  const minSubscriptionMas = MIN_SUBSCRIPTION_MAS[tier];
+  const finalSubscriptionMas = Math.max(subscriptionPriceMas, minSubscriptionMas);
+  
+  const aumFee = AUM_FEE_PERCENT[tier];
+  const maxHeirs = MAX_HEIRS[tier];
+  const maxBalance = MAX_BALANCE_MAS[tier];
+  
+  const deposit = parseFloat(depositAmount) || 0;
+  const gasForInterval = calculateRequiredGas(intervalDays * ONE_DAY_MS);
+  const gasFees = gasForInterval + ORACLE_FEE;
+  const totalRequired = finalSubscriptionMas + gasFees + deposit;
+
+  const addHeir = () => {
+    if (heirs.length < maxHeirs) {
+      setHeirs([...heirs, '']);
+    }
+  };
+
+  const removeHeir = (index: number) => {
+    if (heirs.length > 1) {
+      setHeirs(heirs.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateHeir = (index: number, value: string) => {
+    const newHeirs = [...heirs];
+    newHeirs[index] = value;
+    setHeirs(newHeirs);
+  };
+
+  const handleSubmit = () => {
+    const validHeirs = heirs.filter(h => h.trim().length > 0);
+    if (validHeirs.length === 0) {
+      alert('At least one heir is required');
+      return;
+    }
+    
+    // Build payload JSON
+    const payload = message ? JSON.stringify({ message }) : '';
+    
+    onSubmit(tier, validHeirs, intervalDays, payload, totalRequired, finalSubscriptionMas);
+  };
+
+  const tierColors = ['#374151', '#1D4ED8', '#7C3AED', '#D4AF37'];
+
+  return (
+    <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+      <h2 style={{ color: '#F0F0F2', fontSize: '24px', fontWeight: '700', marginBottom: '8px' }}>
+        Create Your Vault
+      </h2>
+      <p style={{ color: '#606068', fontSize: '14px', marginBottom: '32px' }}>
+        Secure your digital assets for your heirs with annual subscription
+      </p>
+
+      {/* Tier Selection */}
+      <div style={{ marginBottom: '32px' }}>
+        <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>
+          Select Plan
+        </h3>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: '12px',
+        }}>
+          {[0, 1, 2, 3].map(t => (
+            <div
+              key={t}
+              onClick={() => setTier(t)}
+              style={{
+                backgroundColor: tier === t ? '#252529' : '#1A1A1F',
+                border: tier === t ? `2px solid ${tierColors[t]}` : '1px solid #2A2A30',
+                borderRadius: '12px',
+                padding: '20px 16px',
+                cursor: 'pointer',
+                position: 'relative',
+                transition: 'all 0.2s',
+              }}
+            >
+              {t === 2 && (
+                <div style={{
+                  position: 'absolute',
+                  top: '-10px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  backgroundColor: '#7C3AED',
+                  color: '#fff',
+                  fontSize: '10px',
+                  fontWeight: '600',
+                  padding: '4px 10px',
+                  borderRadius: '10px',
+                  textTransform: 'uppercase',
+                }}>
+                  Popular
+                </div>
+              )}
+              
+              <div style={{
+                display: 'inline-block',
+                padding: '4px 10px',
+                backgroundColor: tierColors[t],
+                borderRadius: '12px',
+                color: '#fff',
+                fontSize: '11px',
+                fontWeight: '600',
+                marginBottom: '12px',
+              }}>
+                {TIER_NAMES[t]}
+              </div>
+              
+              <p style={{
+                color: '#F0F0F2',
+                fontSize: '22px',
+                fontWeight: '700',
+                margin: '0 0 4px 0',
+              }}>
+                {t === 0 ? 'Free' : `$${SUBSCRIPTION_PRICES_USD[t]}`}
+              </p>
+              <p style={{ color: '#606068', fontSize: '11px', margin: '0 0 16px 0' }}>
+                {t === 0 ? 'forever' : 'per year'}
+              </p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+                <div style={{ color: '#A0A0A8' }}>
+                  {MAX_HEIRS[t] === 255 ? 'Unlimited' : `Up to ${MAX_HEIRS[t]}`} heirs
+                </div>
+                <div style={{ color: '#A0A0A8' }}>
+                  {MAX_BALANCE_MAS[t] === Infinity ? 'Unlimited' : `Max ${(MAX_BALANCE_MAS[t]/1000).toFixed(0)}K`} MAS
+                </div>
+                <div style={{ color: '#A0A0A8' }}>
+                  {AUM_FEE_PERCENT[t]}% AUM fee
+                </div>
+                {t >= 2 && (
+                  <div style={{ color: '#22C55E' }}>✓ File storage</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Heirs */}
+      <div style={{
+        backgroundColor: '#1A1A1F',
+        border: '1px solid #2A2A30',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '16px',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', margin: 0 }}>
+            Heirs ({heirs.filter(h => h.trim()).length}/{maxHeirs})
+          </h3>
+          {heirs.length < maxHeirs && (
+            <button
+              onClick={addHeir}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: 'transparent',
+                border: '1px solid #3B82F6',
+                borderRadius: '8px',
+                color: '#3B82F6',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              + Add Heir
+            </button>
+          )}
+        </div>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {heirs.map((heir, i) => (
+            <div key={i} style={{ display: 'flex', gap: '10px' }}>
+              <input
+                type="text"
+                value={heir}
+                onChange={e => updateHeir(i, e.target.value)}
+                placeholder="AU1... or AS1..."
+                style={{
+                  flex: 1,
+                  padding: '12px 16px',
+                  backgroundColor: '#252529',
+                  border: '1px solid #3A3A40',
+                  borderRadius: '10px',
+                  color: '#F0F0F2',
+                  fontSize: '14px',
+                  fontFamily: 'monospace',
+                  outline: 'none',
+                }}
+              />
+              {heirs.length > 1 && (
+                <button
+                  onClick={() => removeHeir(i)}
+                  style={{
+                    width: '44px',
+                    backgroundColor: 'transparent',
+                    border: '1px solid #F87171',
+                    borderRadius: '10px',
+                    color: '#F87171',
+                    fontSize: '18px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Interval */}
+      <div style={{
+        backgroundColor: '#1A1A1F',
+        border: '1px solid #2A2A30',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '16px',
+      }}>
+        <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>
+          Check-in Interval
+        </h3>
+        <p style={{ color: '#606068', fontSize: '13px', marginBottom: '16px' }}>
+          How often do you need to ping to confirm you're alive?
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+          {[7, 14, 30, 60, 90, 180, 365].map(days => (
+            <button
+              key={days}
+              onClick={() => setIntervalDays(days)}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: intervalDays === days ? '#3B82F6' : '#252529',
+                border: intervalDays === days ? 'none' : '1px solid #3A3A40',
+                borderRadius: '8px',
+                color: intervalDays === days ? '#fff' : '#A0A0A8',
+                fontSize: '13px',
+                fontWeight: '500',
+                cursor: 'pointer',
+              }}
+            >
+              {days < 30 ? `${days}d` : days < 365 ? `${days / 30}mo` : '1yr'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Initial Deposit */}
+      <div style={{
+        backgroundColor: '#1A1A1F',
+        border: '1px solid #2A2A30',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '16px',
+      }}>
+        <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', marginBottom: '16px' }}>
+          Initial Deposit
+        </h3>
+        <input
+          type="number"
+          value={depositAmount}
+          onChange={e => setDepositAmount(e.target.value)}
+          placeholder="Amount in MAS"
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            backgroundColor: '#252529',
+            border: '1px solid #3A3A40',
+            borderRadius: '10px',
+            color: '#F0F0F2',
+            fontSize: '16px',
+            outline: 'none',
+            boxSizing: 'border-box',
+          }}
+        />
+        {maxBalance !== Infinity && (
+          <p style={{ color: '#606068', fontSize: '12px', marginTop: '8px' }}>
+            Max for this tier: {(maxBalance / 1000).toFixed(0)}K MAS
+          </p>
+        )}
+      </div>
+
+      {/* Legacy Message */}
+      <div style={{
+        backgroundColor: '#1A1A1F',
+        border: '1px solid #2A2A30',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '24px',
+      }}>
+        <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', marginBottom: '8px' }}>
+          Legacy Message <span style={{ color: '#606068', fontWeight: '400' }}>(optional)</span>
+        </h3>
+        <p style={{ color: '#606068', fontSize: '13px', marginBottom: '16px' }}>
+          A personal message that will be revealed to your heirs
+        </p>
+        <textarea
+          value={message}
+          onChange={e => setMessage(e.target.value)}
+          placeholder="Write a message for your heirs..."
+          rows={4}
+          style={{
+            width: '100%',
+            padding: '14px 16px',
+            backgroundColor: '#252529',
+            border: '1px solid #3A3A40',
+            borderRadius: '10px',
+            color: '#F0F0F2',
+            fontSize: '14px',
+            outline: 'none',
+            resize: 'vertical',
+            boxSizing: 'border-box',
+            fontFamily: 'inherit',
+          }}
+        />
+      </div>
+
+      {/* Payment Summary */}
+      <div style={{
+        backgroundColor: '#1A1A1F',
+        border: '1px solid #2A2A30',
+        borderRadius: '12px',
+        padding: '24px',
+        marginBottom: '24px',
+      }}>
+        <h3 style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600', marginBottom: '20px' }}>
+          Payment Summary
+        </h3>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#A0A0A8', fontSize: '14px' }}>
+              Annual Subscription ({TIER_NAMES[tier]})
+            </span>
+            <span style={{ color: '#F0F0F2', fontSize: '14px' }}>
+              ${subscriptionPriceUsd} <span style={{ color: '#606068' }}>≈ {finalSubscriptionMas.toFixed(0)} MAS</span>
+            </span>
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#A0A0A8', fontSize: '14px' }}>Initial Deposit</span>
+            <span style={{ color: '#F0F0F2', fontSize: '14px' }}>{deposit} MAS</span>
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#A0A0A8', fontSize: '14px' }}>Gas + Network Fees</span>
+            <span style={{ color: '#F0F0F2', fontSize: '14px' }}>{gasFees.toFixed(2)} MAS</span>
+          </div>
+          
+          <div style={{ height: '1px', backgroundColor: '#3A3A40', margin: '8px 0' }} />
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#F0F0F2', fontSize: '16px', fontWeight: '600' }}>Total</span>
+            <span style={{ color: '#F0F0F2', fontSize: '20px', fontWeight: '700' }}>
+              ≈ {totalRequired.toFixed(0)} MAS
+            </span>
+          </div>
+        </div>
+
+        {aumFee > 0 && (
+          <p style={{
+            color: '#606068',
+            fontSize: '12px',
+            marginTop: '16px',
+            padding: '12px',
+            backgroundColor: '#252529',
+            borderRadius: '8px',
+          }}>
+            💡 {aumFee}% annual AUM fee will be collected on each ping from your vault balance
+          </p>
+        )}
+      </div>
+
+      {/* Create Button */}
+      <button
+        onClick={handleSubmit}
+        disabled={loading || heirs.filter(h => h.trim()).length === 0}
+        style={{
+          width: '100%',
+          padding: '18px',
+          backgroundColor: '#22C55E',
+          border: 'none',
+          borderRadius: '12px',
+          color: '#fff',
+          fontWeight: '600',
+          fontSize: '16px',
+          cursor: loading ? 'not-allowed' : 'pointer',
+          opacity: loading || heirs.filter(h => h.trim()).length === 0 ? 0.6 : 1,
+        }}
+      >
+        {loading ? 'Creating Vault...' : 'Create Vault'}
+      </button>
+
+      {/* MAS Price Info */}
+      {masPrice && (
+        <p style={{ color: '#606068', fontSize: '12px', textAlign: 'center', marginTop: '16px' }}>
+          Current MAS price: ${masPrice.toFixed(4)} (via CoinGecko)
+        </p>
+      )}
+    </div>
+  );
+}

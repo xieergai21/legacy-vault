@@ -1,0 +1,21 @@
+{
+  "name": "legacy-vault",
+  "version": "1.0.0",
+  "description": "Legacy Vault Smart Contract",
+  "scripts": {
+    "build": "asc assembly/contracts/main.ts --target release --outFile build/main.wasm --textFile build/main.wat",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy": "ts-node scripts/deploy.ts"
+  },
+  "dependencies": {
+    "@massalabs/as-types": "^2.1.0",
+    "@massalabs/massa-as-sdk": "^3.0.2",
+    "@massalabs/massa-web3": "^5.3.0",
+    "as-bignum": "^0.3.1",
+    "assemblyscript": "^0.27.0",
+    "dotenv": "^16.3.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
+  },
+  "type": "module"
+}

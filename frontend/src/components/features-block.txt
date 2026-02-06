@@ -1,0 +1,43 @@
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+                {t === 0 && (
+                  <>
+                    <div style={{ color: '#A0A0A8' }}>25 char on-chain text</div>
+                    <div style={{ color: '#A0A0A8' }}>AES-256 encryption</div>
+                    <div style={{ color: '#A0A0A8' }}>Up to 1 heir</div>
+                    <div style={{ color: '#A0A0A8' }}>Max 10K MAS</div>
+                    <div style={{ color: '#A0A0A8' }}>0% AUM fee</div>
+                  </>
+                )}
+                {t === 1 && (
+                  <>
+                    <div style={{ color: '#A0A0A8' }}>1 KB text (1024 char)</div>
+                    <div style={{ color: '#A0A0A8' }}>AES-256 encryption</div>
+                    <div style={{ color: '#A0A0A8' }}>Up to 3 heirs</div>
+                    <div style={{ color: '#A0A0A8' }}>Max 200K MAS</div>
+                    <div style={{ color: '#A0A0A8' }}>1% AUM fee</div>
+                    <div style={{ color: '#22C55E' }}>✓ Email alerts</div>
+                  </>
+                )}
+                {t === 2 && (
+                  <>
+                    <div style={{ color: '#A0A0A8' }}>50 MB file storage</div>
+                    <div style={{ color: '#A0A0A8' }}>2 KB notes (2048 char)</div>
+                    <div style={{ color: '#A0A0A8' }}>Up to 10 heirs</div>
+                    <div style={{ color: '#A0A0A8' }}>Max 2M MAS</div>
+                    <div style={{ color: '#A0A0A8' }}>0.5% AUM fee</div>
+                    <div style={{ color: '#22C55E' }}>✓ Email alerts</div>
+                  </>
+                )}
+                {t === 3 && (
+                  <>
+                    <div style={{ color: '#A0A0A8' }}>1 GB file storage</div>
+                    <div style={{ color: '#A0A0A8' }}>2 KB notes (2048 char)</div>
+                    <div style={{ color: '#A0A0A8' }}>Unlimited heirs</div>
+                    <div style={{ color: '#A0A0A8' }}>Unlimited MAS</div>
+                    <div style={{ color: '#A0A0A8' }}>0.25% AUM fee</div>
+                    <div style={{ color: '#22C55E' }}>✓ Email alerts</div>
+                    <div style={{ color: '#606068', fontSize: '10px' }}>Dynamic distribution (soon)</div>
+                  </>
+                )}
+              </div>
