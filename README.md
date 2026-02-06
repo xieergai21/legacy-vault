@@ -65,7 +65,7 @@ Every year, billions of dollars in cryptocurrency become permanently inaccessibl
 | Feature | FREE | LIGHT | VAULT PRO | LEGATE |
 |---------|------|-------|-----------|--------|
 | **Annual Price** | $0 | $9.99 | $29.99 | $89.99 |
-| **AUM Fee** | 0% | 1% | 0.5% | 0.25% |
+| **AUM Fee** | 0% | 2% | 1% | 0.5% |
 | **Max Heirs** | 1 | 3 | 10 | Unlimited |
 | **Max Balance** | 10K MAS | 200K MAS | 2M MAS | Unlimited |
 | **Message Storage** | 25 chars | 1 KB | 2 KB | 2 KB |

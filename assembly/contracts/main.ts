@@ -78,9 +78,9 @@ const SUBSCRIPTION_PERIOD: u64 = 365 * 24 * 60 * 60 * 1000;
 
 // AUM Fee in basis points (100 bps = 1%)
 const AUM_FEE_FREE: u64 = 0;      // 0%
-const AUM_FEE_LIGHT: u64 = 100;   // 1% annual
-const AUM_FEE_PRO: u64 = 50;      // 0.5% annual
-const AUM_FEE_LEGATE: u64 = 25;   // 0.25% annual
+const AUM_FEE_LIGHT: u64 = 200;   // 2% annual
+const AUM_FEE_PRO: u64 = 100;     // 1% annual
+const AUM_FEE_LEGATE: u64 = 50;   // 0.5% annual
 const BPS_DENOMINATOR: u64 = 10000;
 const MS_PER_YEAR: u64 = 365 * 24 * 60 * 60 * 1000;
 
