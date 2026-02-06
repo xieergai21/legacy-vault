@@ -141,7 +141,7 @@ Annual subscriptions keep the protocol sustainable. A small AUM (Assets Under Ma
 
 | Network | Address | Status |
 |---------|---------|--------|
-| Buildnet | `AS12gd8bNux6qsrMKVn4xR43W1HKMDNpAyjsJFL6ULgitvL3QDKvn` | Active |
+| Buildnet | `AS12guyW17PsRbcvQng2gZuaLyxgPVMBJnuZ8SRRq6mGSF5Nt74Ms` | Active |
 | Mainnet | Coming soon | — |
 
 ### Core Functions
