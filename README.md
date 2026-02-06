@@ -6,7 +6,7 @@ Legacy Vault is an autonomous dead man's switch protocol for secure cryptocurren
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Massa Network](https://img.shields.io/badge/Network-Massa-blue)](https://massa.net)
-[![Contract Version](https://img.shields.io/badge/Contract-v3.1-green)]()
+[![Contract Version](https://img.shields.io/badge/Contract-v4.0-green)]()
 [![App](https://img.shields.io/badge/App-Live-brightgreen)](https://app.legacy-vault.xyz)
 
 > ⚠️ **Beta on Massa Buildnet** — Do not use with significant funds until mainnet release.
@@ -80,6 +80,45 @@ Every year, billions of dollars in cryptocurrency become permanently inaccessibl
 
 ---
 
+## Gas & Network Fees
+
+### Dynamic Gas Calculation
+
+Gas fees are calculated dynamically based on your check-in interval. Longer intervals require more gas to fund the chain of Autonomous Smart Contract (ASC) calls.
+
+**Contract minimum floor:** `numCalls × 1.0 MAS + 2 MAS buffer`
+**Frontend recommended:** `(numCalls × 1.21 MAS + 3 MAS buffer) × 1.3 safety multiplier`
+
+Gas excess above minimum stays on contract balance. Admin can withdraw via `adminWithdrawGasExcess()`.
+
+| Interval | ASC Calls | Recommended Gas | Minimum Floor |
+|----------|-----------|-----------------|---------------|
+| 5 min (test) | 1 | 5.48 MAS | 3.01 MAS |
+| 1 day | 1 | 5.48 MAS | 3.01 MAS |
+| 7 days | 2 | 7.06 MAS | 4.01 MAS |
+| 14 days | 3 | 8.63 MAS | 5.01 MAS |
+| 30 days | 5 | 11.78 MAS | 7.01 MAS |
+| 90 days | 15 | 27.50 MAS | 17.01 MAS |
+| 180 days | 30 | 51.10 MAS | 32.01 MAS |
+| 1 year | 61 | 99.86 MAS | 63.01 MAS |
+
+### Why ASC Chains?
+
+Massa's deferred calls have a maximum scheduling window of ~7 days. For longer intervals, Legacy Vault creates a chain of ASC calls that reschedule themselves until the unlock date is reached.
+
+### Who Pays What?
+
+| Fee Type | Paid By | When |
+|----------|---------|------|
+| **Subscription** | Owner | At vault creation |
+| **Gas + Network** | Owner | At creation & each ping |
+| **AUM Fee** | Owner | At each ping |
+| **Claim Gas** | Heir | When claiming inheritance |
+
+> 💡 **Important:** AUM fees and gas are paid by the vault owner, NOT deducted from the inheritance balance. Your heirs receive the full deposited amount.
+
+---
+
 ## Key Features
 
 ### Autonomous Smart Contracts (ASC)
@@ -102,7 +141,7 @@ Annual subscriptions keep the protocol sustainable. A small AUM (Assets Under Ma
 
 | Network | Address | Status |
 |---------|---------|--------|
-| Buildnet | `AS1qj32F95nHt93svdvt94AXFeXdV5GfEMcwXmCoN3ALkaEvMQN8` | Active |
+| Buildnet | `AS12gd8bNux6qsrMKVn4xR43W1HKMDNpAyjsJFL6ULgitvL3QDKvn` | Active |
 | Mainnet | Coming soon | — |
 
 ### Core Functions
@@ -122,10 +161,16 @@ Annual subscriptions keep the protocol sustainable. A small AUM (Assets Under Ma
 - `claimInheritance()` — Heir claims after unlock
 - `claimInheritanceWithUsdc()` — Heir pays expired subscription with USDC
 
+**Gas Management**
+- `getMinGasDeposit()` — Get minimum gas deposit for interval
+- `getNumAscCalls()` — Get number of ASC calls needed
+- `getGasExcess()` — Get accumulated gas excess on contract
+- `adminWithdrawGasExcess()` — Admin withdraws gas excess
+
 **Read Functions**
 - `getVault()` — Get vault data
-- `getVaultsAsHeir()` — Get vaults where address is heir
-- `getTierPrice()` — Get subscription price
+- `getVaultsForHeir()` — Get vaults where address is heir
+- `getSubscriptionPrice()` — Get subscription price
 - `getSubscriptionPriceUsdc()` — Get USDC price
 
 ---
@@ -161,6 +206,25 @@ No one except designated heirs can claim — enforced by smart contract.
 
 ---
 
+## Email Notifications
+
+LIGHT, PRO, and LEGATE tiers include email alerts for critical vault events:
+
+- **Vault Expiration Warning** — Reminder sent before unlock date
+- **Subscription Expiring** — Alert when annual subscription needs renewal
+- **Inheritance Available** — Notification to heirs when vault unlocks
+
+### Setup
+
+1. Go to vault dashboard
+2. Click "Notification Settings"
+3. Enter email addresses for owner and heirs
+4. Verify email via confirmation link
+
+Email service powered by Resend. Notifications are optional and can be disabled anytime.
+
+---
+
 ## Technical Architecture
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -175,6 +239,7 @@ No one except designated heirs can claim — enforced by smart contract.
 │  │              Legacy Vault Contract                   │   │
 │  │  - Vault storage and management                      │   │
 │  │  - ASC deferred calls for auto-unlock               │   │
+│  │  - Dynamic gas with x1.3 safety buffer              │   │
 │  │  - USDC integration via transferFrom                │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
