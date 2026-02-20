@@ -27,6 +27,7 @@ import {
   currentThread,
   Slot,
   call,
+  balance,
 } from '@massalabs/massa-as-sdk';
 
 import {
@@ -37,14 +38,15 @@ import {
   bytesToU64,
 } from '@massalabs/as-types';
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // STORAGE KEYS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const VAULT_PREFIX: string = 'VAULT_';
 const ORACLE_KEY: string = 'ORACLE';
 const RATE_KEY: string = 'RATE';
 const ADMIN_KEY: string = 'ADMIN';
+const PENDING_ADMIN_KEY: string = 'PENDING_ADMIN';
 const INITIALIZED_KEY: string = 'INIT';
 const DEFERRED_CALL_PREFIX: string = 'DC_';
 const HEIR_VAULTS_PREFIX: string = 'HEIR_';
@@ -52,14 +54,12 @@ const DISTRIBUTED_PREFIX: string = 'DIST_';
 const DISTRIBUTED_HEIR_PREFIX: string = 'DISTHEIR_';
 const TOTAL_REVENUE_KEY: string = 'REVENUE';
 const TOTAL_AUM_FEES_KEY: string = 'AUM_FEES';
-const TOTAL_VAULT_BALANCES_KEY: string = 'VAULT_BALANCES';
-const TOTAL_LOCKED_GAS_KEY: string = 'LOCKED_GAS';
 const USDC_CONTRACT: string = "AS1hCJXjndR4c9vekLWsXGnrdigp4AaZ7uYG3UKFzzKnWVsrNLPJ";
 const USDC_DECIMALS: u64 = 1_000_000; // USDC has 6 decimals
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CONSTANTS - PRICING
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const MASSA_DECIMALS: u64 = 1_000_000_000;
 
@@ -80,9 +80,9 @@ const SUBSCRIPTION_PERIOD: u64 = 365 * 24 * 60 * 60 * 1000;
 
 // AUM Fee in basis points (100 bps = 1%)
 const AUM_FEE_FREE: u64 = 0;      // 0%
-const AUM_FEE_LIGHT: u64 = 100;   // 1% annual
-const AUM_FEE_PRO: u64 = 50;      // 0.5% annual
-const AUM_FEE_LEGATE: u64 = 25;   // 0.25% annual
+const AUM_FEE_LIGHT: u64 = 200;   // 2% annual
+const AUM_FEE_PRO: u64 = 100;     // 1% annual
+const AUM_FEE_LEGATE: u64 = 50;   // 0.5% annual
 const BPS_DENOMINATOR: u64 = 10000;
 const MS_PER_YEAR: u64 = 365 * 24 * 60 * 60 * 1000;
 
@@ -106,26 +106,72 @@ const MAX_PAYLOAD_LEGATE: u32 = 5120;
 
 // Other constants
 const MIN_HEARTBEAT_INTERVAL: u64 = 300000; // 5 min for testing // 1 day in ms
+const MAX_HEARTBEAT_INTERVAL: u64 = 365 * 24 * 60 * 60 * 1000; // 1 year max
 const PERIOD_DURATION_MS: u64 = 16000;
 
 export const ORACLE_FEE: u64 = 10_000_000; // 0.01 MAS
 export const DEFERRED_CALL_GAS: u64 = 100_000_000;
 export const MAX_DEFERRED_INTERVAL: u64 = 6 * 24 * 60 * 60 * 1000; // 6 days max for deferred call
-export const DEFERRED_CALL_COST: u64 = 1_210_000_000; // 1.21 MAS per call (1.05 + 15%)
-export const GAS_BUFFER: u64 = 3 * MASSA_DECIMALS; // 3 MAS extra buffer
 
-// Calculate required gas deposit based on interval
-export function _calcRequiredGasDeposit(intervalMs: u64): u64 {
-  const numCalls = (intervalMs + MAX_DEFERRED_INTERVAL - 1) / MAX_DEFERRED_INTERVAL; // ceil division
-  return numCalls * DEFERRED_CALL_COST + GAS_BUFFER;
+// Minimum safe gas per ASC call (absolute floor, protects against underfunding)
+// Network deferred call fee is ~1.05-1.21 MAS, so 1.0 MAS is the realistic floor
+const MIN_GAS_PER_CALL: u64 = 1_000_000_000; // 1.0 MAS per call
+const MIN_GAS_BUFFER: u64 = 2 * MASSA_DECIMALS; // 2 MAS buffer
+
+// Storage key for accumulated gas excess (admin-withdrawable)
+const GAS_EXCESS_KEY: string = 'GAS_EXCESS';
+
+// Calculate minimum required gas deposit (contract-side safety floor)
+export function _calcMinGasDeposit(intervalMs: u64): u64 {
+  const numCalls = (intervalMs + MAX_DEFERRED_INTERVAL - 1) / MAX_DEFERRED_INTERVAL;
+  return numCalls * MIN_GAS_PER_CALL + MIN_GAS_BUFFER;
 }
 
-// Public function to get gas estimate for frontend
-export function getRequiredGasDeposit(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+// Calculate number of ASC calls needed for a given interval
+export function _calcNumCalls(intervalMs: u64): u64 {
+  return (intervalMs + MAX_DEFERRED_INTERVAL - 1) / MAX_DEFERRED_INTERVAL;
+}
+
+// Track gas excess that admin can withdraw
+function _getGasExcess(): u64 {
+  const key = stringToBytes(GAS_EXCESS_KEY);
+  if (!Storage.has(key)) return 0;
+  return bytesToU64(Storage.get(key));
+}
+
+function _addGasExcess(amount: u64): void {
+  const current = _getGasExcess();
+  Storage.set(stringToBytes(GAS_EXCESS_KEY), u64ToBytes(current + amount));
+}
+
+function _subtractGasExcess(amount: u64): void {
+  const current = _getGasExcess();
+  if (amount > current) {
+    Storage.set(stringToBytes(GAS_EXCESS_KEY), u64ToBytes(0));
+  } else {
+    Storage.set(stringToBytes(GAS_EXCESS_KEY), u64ToBytes(current - amount));
+  }
+}
+
+// Public: get minimum gas deposit for frontend display
+export function getMinGasDeposit(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const intervalMs = args.nextU64().unwrap();
-  const required = _calcRequiredGasDeposit(intervalMs);
-  return new Args().add(required).serialize();
+  const minGas = _calcMinGasDeposit(intervalMs);
+  return new Args().add(minGas).serialize();
+}
+
+// Public: get number of ASC calls needed
+export function getNumAscCalls(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const intervalMs = args.nextU64().unwrap();
+  const numCalls = _calcNumCalls(intervalMs);
+  return new Args().add(numCalls).serialize();
+}
+
+// Public: get accumulated gas excess balance
+export function getGasExcess(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  return u64ToBytes(_getGasExcess());
 }
 
 // Tiers
@@ -134,9 +180,9 @@ export const TIER_LIGHT: u8 = 1;
 export const TIER_VAULT_PRO: u8 = 2;
 export const TIER_LEGATE: u8 = 3;
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // KEY GENERATION FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _getVaultKey(address: string): string { return VAULT_PREFIX + address; }
 function _getDeferredCallKey(address: string): string { return DEFERRED_CALL_PREFIX + address; }
@@ -145,20 +191,21 @@ function _getDistributedKey(owner: string): string { return DISTRIBUTED_PREFIX +
 function _getDistributedHeirKey(heir: string): string { return DISTRIBUTED_HEIR_PREFIX + heir; }
 function _vaultExists(address: string): bool { return Storage.has(stringToBytes(_getVaultKey(address))); }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // RATE AND PRICING FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _getMassaUsdRate(): u64 {
   const key = stringToBytes(RATE_KEY);
   if (Storage.has(key)) return bytesToU64(Storage.get(key));
-  return 5; // Default 5 cents ($0.05)
+  return 431; // Default 431 milicents ($0.00431)
 }
 
 function _usdToMassa(usdCents: u64): u64 {
   const rate = _getMassaUsdRate();
   if (rate == 0) return 0;
-  return (usdCents * MASSA_DECIMALS) / rate;
+  // Rate is in milicents (1/1000 cent), so multiply usdCents by 1000
+  return (usdCents * 1000 * MASSA_DECIMALS) / rate;
 }
 
 function _getSubscriptionPriceUsd(tier: u8): u64 {
@@ -206,9 +253,9 @@ function _getMaxPayload(tier: u8): u32 {
   return MAX_PAYLOAD_LEGATE;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ADMIN AND STORAGE FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 
 // Transfer USDC from user to this contract
@@ -280,39 +327,6 @@ function _addAumFees(amount: u64): void {
   Storage.set(stringToBytes(TOTAL_AUM_FEES_KEY), u64ToBytes(current + amount));
 }
 
-// Track total vault balances
-function _getTotalVaultBalances(): u64 {
-  const key = stringToBytes(TOTAL_VAULT_BALANCES_KEY);
-  if (!Storage.has(key)) return 0;
-  return bytesToU64(Storage.get(key));
-}
-function _addVaultBalance(amount: u64): void {
-  const current = _getTotalVaultBalances();
-  Storage.set(stringToBytes(TOTAL_VAULT_BALANCES_KEY), u64ToBytes(current + amount));
-}
-function _subtractVaultBalance(amount: u64): void {
-  const current = _getTotalVaultBalances();
-  const newVal = amount > current ? 0 : current - amount;
-  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(newVal));
-  Storage.set(stringToBytes(TOTAL_VAULT_BALANCES_KEY), u64ToBytes(newVal));
-}
-
-// Track locked gas for ASCs
-function _getTotalLockedGas(): u64 {
-  const key = stringToBytes(TOTAL_LOCKED_GAS_KEY);
-  if (!Storage.has(key)) return 0;
-  return bytesToU64(Storage.get(key));
-}
-function _addLockedGas(amount: u64): void {
-  const current = _getTotalLockedGas();
-  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(current + amount));
-}
-function _subtractLockedGas(amount: u64): void {
-  const current = _getTotalLockedGas();
-  const newVal = amount > current ? 0 : current - amount;
-  Storage.set(stringToBytes(TOTAL_LOCKED_GAS_KEY), u64ToBytes(newVal));
-}
-
 function _saveVault(owner: string, data: string): void { 
   Storage.set(stringToBytes(_getVaultKey(owner)), stringToBytes(data)); 
 }
@@ -336,15 +350,25 @@ function _deleteDeferredCallId(owner: string): void {
   if (Storage.has(key)) Storage.del(key);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // HEIR TRACKING FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+function _containsPipe(s: string): bool {
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) == 124) return true; // 124 = '|'
+  }
+  return false;
+}
 
 function _addVaultToHeir(heir: string, owner: string): void {
   const key = stringToBytes(_getHeirVaultsKey(heir));
   let owners = '';
   if (Storage.has(key)) owners = bytesToString(Storage.get(key));
-  if (!owners.includes(owner)) {
+  const ownerArr = owners.length > 0 ? owners.split(',') : [];
+  let found = false;
+  for (let i = 0; i < ownerArr.length; i++) { if (ownerArr[i] == owner) { found = true; break; } }
+  if (!found) {
     owners = owners.length > 0 ? owners + ',' + owner : owner;
     Storage.set(key, stringToBytes(owners));
   }
@@ -367,27 +391,31 @@ function _addDistributedToHeir(heir: string, owner: string): void {
   const key = stringToBytes(_getDistributedHeirKey(heir));
   let owners = '';
   if (Storage.has(key)) owners = bytesToString(Storage.get(key));
-  if (!owners.includes(owner)) {
+  const ownerArr = owners.length > 0 ? owners.split(',') : [];
+  let found = false;
+  for (let i = 0; i < ownerArr.length; i++) { if (ownerArr[i] == owner) { found = true; break; } }
+  if (!found) {
     owners = owners.length > 0 ? owners + ',' + owner : owner;
     Storage.set(key, stringToBytes(owners));
   }
 }
 
-function _saveDistributedAmount(owner: string, total: u64, perHeir: u64, heirsCount: i32, feeCollected: u64): void {
-  const data = total.toString() + '|' + perHeir.toString() + '|' + heirsCount.toString() + '|' + Context.timestamp().toString() + '|' + feeCollected.toString();
+function _saveDistributedAmount(owner: string, total: u64, perHeir: u64, heirsCount: i32, feeCollected: u64, payload: string = '', arweaveTxId: string = '', encryptedKey: string = ''): void {
+  const data = total.toString() + '|' + perHeir.toString() + '|' + heirsCount.toString() + '|' + Context.timestamp().toString() + '|' + feeCollected.toString() + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey;
   Storage.set(stringToBytes(_getDistributedKey(owner)), stringToBytes(data));
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // AUM FEE CALCULATION
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _calculateAumFee(balance: u64, feeBps: u64, lastCollection: u64, now: u64): u64 {
   if (feeBps == 0 || balance == 0) return 0;
   const timePassed = now - lastCollection;
   // fee = balance * (feeBps / 10000) * (timePassed / MS_PER_YEAR)
-  // Reorder to avoid overflow: balance * feeBps * timePassed / (10000 * MS_PER_YEAR)
-  const fee = (balance / 1000) * feeBps * (timePassed / 1000) / (BPS_DENOMINATOR * (MS_PER_YEAR / 1000000));
+  // Hourly precision to avoid overflow
+  const annualFee = balance * feeBps / BPS_DENOMINATOR;
+  const fee = (annualFee / 8760) * (timePassed / 3600000);
   return fee;
 }
 
@@ -417,9 +445,9 @@ function _collectAumFee(parts: string[], now: u64): u64 {
   return fee;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // SUBSCRIPTION HELPERS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _isSubscriptionActive(parts: string[], now: u64): bool {
   const tier = U8.parseInt(parts[0]);
@@ -428,9 +456,9 @@ function _isSubscriptionActive(parts: string[], now: u64): bool {
   return now < expiry;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DEFERRED CALL (ASC) FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _timestampToPeriod(timestampMs: u64): u64 {
   const nowPeriod = currentPeriod();
@@ -447,7 +475,9 @@ function _scheduleASC(ownerAddress: string, unlockTimestamp: u64, gasDeposit: u6
   // Limit to max 6 days due to Massa deferred call limit (7 days max)
   const now = Context.timestamp();
   const maxAllowedTimestamp = now + MAX_DEFERRED_INTERVAL;
-  const targetTimestamp = unlockTimestamp < maxAllowedTimestamp ? unlockTimestamp : maxAllowedTimestamp;
+  const minAllowedTimestamp = now + 60000; // At least 1 minute in the future
+  let targetTimestamp = unlockTimestamp < maxAllowedTimestamp ? unlockTimestamp : maxAllowedTimestamp;
+  if (targetTimestamp < minAllowedTimestamp) targetTimestamp = minAllowedTimestamp;
   
   const targetPeriod = _timestampToPeriod(targetTimestamp);
   const targetThread = currentThread();
@@ -466,9 +496,9 @@ function _cancelASC(ownerAddress: string): void {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CONSTRUCTOR
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function constructor(binaryArgs: StaticArray<u8>): void {
   assert(callerHasWriteAccess(), 'Unauthorized');
@@ -477,7 +507,7 @@ export function constructor(binaryArgs: StaticArray<u8>): void {
   const adminAddress = args.nextString().unwrap();
   Storage.set(stringToBytes(ORACLE_KEY), stringToBytes(oracleAddress));
   Storage.set(stringToBytes(ADMIN_KEY), stringToBytes(adminAddress));
-  Storage.set(stringToBytes(RATE_KEY), u64ToBytes(5)); // Default 5 cents
+  Storage.set(stringToBytes(RATE_KEY), u64ToBytes(431)); // Default 431 milicents ($0.00431)
   Storage.set(stringToBytes(INITIALIZED_KEY), u64ToBytes(1));
   Storage.set(stringToBytes(TOTAL_REVENUE_KEY), u64ToBytes(0));
   Storage.set(stringToBytes(TOTAL_AUM_FEES_KEY), u64ToBytes(0));
@@ -489,14 +519,21 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
   assert(caller == _getOracle() || caller == _getAdmin(), 'Only oracle or admin');
   const args = new Args(binaryArgs);
   const newRate = args.nextU64().unwrap();
-  assert(newRate > 0 && newRate < 1000000, 'Rate out of range');
+  assert(newRate > 0 && newRate < 100000000, 'Rate out of range'); // milicents
+  // Safety: limit rate change to ±50% per update
+  const currentRate = _getMassaUsdRate();
+  if (currentRate > 0) {
+    const minAllowed: u64 = currentRate / 2;
+    const maxAllowed: u64 = currentRate + currentRate / 2;
+    assert(newRate >= minAllowed && newRate <= maxAllowed, 'Rate change exceeds 50% limit');
+  }
   Storage.set(stringToBytes(RATE_KEY), u64ToBytes(newRate));
   generateEvent('RATE_UPDATED:' + newRate.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CREATE VAULT
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * createVault v3 - with subscription model
@@ -511,7 +548,8 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
  * - encryptedKey: string
  * - subscriptionPayment: u64 (subscription payment in nanoMAS)
  * 
- * Transferred coins = subscriptionPayment + requiredGasDeposit + ORACLE_FEE + userBalance
+ * Transferred coins = subscriptionPayment + gasDeposit + ORACLE_FEE + userBalance
+ * Gas deposit is validated against minimum safety floor, but frontend sends recommended amount
  */
 export function createVault(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -543,12 +581,13 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     const heir = args.nextString().unwrap();
     assert(heir != caller, 'Cannot be own heir');
     heirsArray.push(heir);
-    heirsData += heir + ',';
+    heirsData += (i > 0 ? ',' : '') + heir;
   }
   
   // Parse interval
   const interval = args.nextU64().unwrap();
   assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short (min 5 min)');
+  assert(interval <= MAX_HEARTBEAT_INTERVAL, 'Interval too long (max 1 year)');
   
   // Parse payload
   const payloadResult = args.nextString();
@@ -556,15 +595,18 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   const payloadSize = payload.length as u32;
   const maxPayload = _getMaxPayload(tier);
   assert(payloadSize <= maxPayload, 'Payload too large for this tier');
+  assert(!_containsPipe(payload), 'Payload cannot contain pipe character');
   
   // Parse arweave
   const arweaveResult = args.nextString();
   const arweaveTxId = arweaveResult.isErr() ? '' : arweaveResult.unwrap();
   if (arweaveTxId.length > 0) assert(tier >= TIER_VAULT_PRO, 'Arweave requires PRO+');
+  assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
   
   // Parse encrypted key
   const keyResult = args.nextString();
   const encryptedKey = keyResult.isErr() ? '' : keyResult.unwrap();
+  assert(!_containsPipe(encryptedKey), 'EncryptedKey cannot contain pipe');
   
   // Parse subscription payment
   const subscriptionPaymentResult = args.nextU64();
@@ -583,14 +625,44 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     assert(subscriptionPayment >= minSubscription, 'Payment below minimum');
   }
   
-  // Calculate amounts - gas depends on interval
-  const requiredGasDeposit = _calcRequiredGasDeposit(interval);
-  const totalDeductions = subscriptionPayment + ORACLE_FEE + requiredGasDeposit;
+  // Calculate amounts - validate gas meets minimum safety floor
+  const minGasDeposit = _calcMinGasDeposit(interval);
+  const totalDeductions = subscriptionPayment + ORACLE_FEE + minGasDeposit;
   assert(transferred >= totalDeductions, 'Insufficient funds for subscription + gas');
   
+  // Gas deposit = everything beyond subscription + oracle + vault balance
+  // Frontend sends recommended amount; contract accepts anything above minimum
   let userBalance: u64 = 0;
-  if (transferred > totalDeductions) {
+  let gasDeposit: u64 = 0;
+  
+  // Parse optional gas deposit hint from frontend
+  const gasHintResult = args.nextU64();
+  if (gasHintResult.isOk()) {
+    const hintedGas = gasHintResult.unwrap();
+    // Use hinted gas if it's above minimum, otherwise use minimum
+    gasDeposit = hintedGas >= minGasDeposit ? hintedGas : minGasDeposit;
+    const neededForGas = subscriptionPayment + ORACLE_FEE + gasDeposit;
+    assert(transferred >= neededForGas, 'Insufficient funds for requested gas level');
+    userBalance = transferred - neededForGas;
+  } else {
+    // No gas hint: deduct subscription + oracle + min gas, rest is vault balance
+    gasDeposit = minGasDeposit;
     userBalance = transferred - totalDeductions;
+  }
+  
+  // Parse optional explicit vault balance
+  const vaultBalanceResult = args.nextU64();
+  if (vaultBalanceResult.isOk()) {
+    const explicitBalance = vaultBalanceResult.unwrap();
+    if (explicitBalance > 0) {
+      assert(userBalance >= explicitBalance, 'Vault balance exceeds available funds');
+      const excess = userBalance - explicitBalance;
+      userBalance = explicitBalance;
+      if (excess > 0) {
+        _addRevenue(excess);
+        generateEvent('EXCESS_TO_REVENUE:' + caller + ':' + excess.toString());
+      }
+    }
   }
   
   // Check max balance
@@ -640,17 +712,15 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     _addVaultToHeir(heirsArray[i], caller);
   }
   
-  // Schedule ASC
-  _scheduleASC(caller, unlockDate, requiredGasDeposit);
-  _addVaultBalance(userBalance);
-  _addLockedGas(requiredGasDeposit);
+  // Schedule ASC with the gas deposit provided by the user
+  _scheduleASC(caller, unlockDate, gasDeposit);
   
-  generateEvent('VAULT_CREATED:' + caller + ':tier=' + tier.toString() + ':unlockDate=' + unlockDate.toString() + ':subscriptionExpiry=' + subscriptionExpiry.toString());
+  generateEvent('VAULT_CREATED:' + caller + ':tier=' + tier.toString() + ':unlockDate=' + unlockDate.toString() + ':subscriptionExpiry=' + subscriptionExpiry.toString() + ':gasDeposit=' + gasDeposit.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PING (with subscription check and AUM fee)
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function ping(_binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -678,21 +748,22 @@ export function ping(_binaryArgs: StaticArray<u8>): void {
   const aumFee = _calculateAumFee(balance, feeBps, lastCollection, now);
   // Process gas/deposit - owner MUST pay gas, never take from inheritance
   const interval = U64.parseInt(parts[2]);
-  // balance already defined above
   
-  // Calculate required gas based on interval
-  const requiredGas = _calcRequiredGasDeposit(interval);
-  const minRequired = requiredGas + ORACLE_FEE + aumFee;
+  // Validate minimum gas threshold
+  const minGas = _calcMinGasDeposit(interval);
+  const minRequired = minGas + ORACLE_FEE + aumFee;
   
-  assert(transferred >= minRequired, 'Must pay gas + AUM fee');
+  assert(transferred >= minRequired, 'Must pay gas + AUM fee (minimum threshold)');
   
-  const gasFunding = requiredGas;
+  // Gas funding = transferred minus oracle fee and AUM fee
+  // Frontend sends recommended amount based on network conditions
+  const gasFunding = transferred - ORACLE_FEE - aumFee;
   
-  // Any excess stays in contract as protocol revenue
-  if (transferred > minRequired) {
-    const excess = transferred - minRequired;
-    _addRevenue(excess);
-    generateEvent('EXCESS_TO_REVENUE:' + caller + ':' + excess.toString());
+  // Track excess above minimum as admin-withdrawable gas surplus
+  if (gasFunding > minGas) {
+    const excess = gasFunding - minGas;
+    _addGasExcess(excess);
+    generateEvent('GAS_EXCESS_ADDED:' + caller + ':' + excess.toString());
   }
   
   // Transfer AUM fee to admin (paid by owner, not from vault)
@@ -723,9 +794,9 @@ export function ping(_binaryArgs: StaticArray<u8>): void {
   generateEvent('PING:' + caller + ':newUnlock=' + newUnlockDate.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DEPOSIT
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function deposit(_binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -754,14 +825,13 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   
   parts[5] = newBalance.toString();
   _saveVault(caller, parts.join('|'));
-  _addVaultBalance(amount);
   
   generateEvent('DEPOSIT:' + caller + ':' + amount.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // RENEW SUBSCRIPTION
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * renewSubscription - pay to extend subscription
@@ -842,42 +912,88 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const tier = args.nextU8().unwrap();
   const heirsData = args.nextString().unwrap();
+  assert(!_containsPipe(heirsData), 'Heirs data cannot contain pipe');
   const interval = args.nextU64().unwrap();
   const payload = args.nextString().unwrap();
   const arweaveTxId = args.nextString().unwrap();
   const encryptedKey = args.nextString().unwrap();
+  assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
+  assert(!_containsPipe(encryptedKey), 'EncryptedKey cannot contain pipe');
   
   assert(tier >= TIER_FREE && tier <= TIER_LEGATE, 'Invalid tier');
+  assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short');
+  assert(interval <= MAX_HEARTBEAT_INTERVAL, 'Interval too long (max 1 year)');
   
-  const usdcPrice = _getSubscriptionPriceUsdc(tier);
-  if (usdcPrice > 0) {
-    _transferUsdcFrom(caller, usdcPrice);
-    _transferUsdcTo(_getAdmin(), usdcPrice);
+  // Check existing vault
+  if (_vaultExists(caller)) {
+    const oldData = _loadVault(caller);
+    const oldParts = oldData.split('|');
+    assert(oldParts[4] == '0', 'Vault already active');
+    _deleteDeferredCallId(caller);
   }
   
-  const transferred = Context.transferredCoins();
-  const requiredGasDeposit = _calcRequiredGasDeposit(interval);
-  const minGas = requiredGasDeposit + ORACLE_FEE;
-  assert(transferred >= minGas, 'Insufficient MAS for gas');
-  const userBalance = transferred - minGas;
+  // Validate payload size
+  const maxPayload = _getMaxPayload(tier);
+  assert(payload.length <= i32(maxPayload), 'Payload too large');
+  assert(!_containsPipe(payload), 'Payload cannot contain pipe character');
   
-  const heirsArray = heirsData.split(',');
+  const usdcPrice = _getSubscriptionPriceUsdc(tier);
+  // USDC transfer deferred to after state save (checks-effects-interactions)
+  
+  const transferred = Context.transferredCoins();
+  const minGasDeposit = _calcMinGasDeposit(interval);
+  const minGas = minGasDeposit + ORACLE_FEE;
+  assert(transferred >= minGas, 'Insufficient MAS for gas');
+  // Use all MAS beyond oracle fee for gas + vault balance
+  const availableForGas = transferred - ORACLE_FEE;
+  const gasDeposit = availableForGas > minGasDeposit ? availableForGas : minGasDeposit;
+  const userBalance = transferred > ORACLE_FEE + gasDeposit ? transferred - ORACLE_FEE - gasDeposit : 0;
+  
+  // Parse optional explicit vault balance (last MAS arg)
+  const vaultBalanceResultUsdc = args.nextU64();
+  let finalUserBalance: u64 = userBalance;
+  if (vaultBalanceResultUsdc.isOk()) {
+    const explicitBal = vaultBalanceResultUsdc.unwrap();
+    if (explicitBal > 0) {
+      assert(userBalance >= explicitBal, 'Vault balance exceeds available');
+      const excessUsdc = userBalance - explicitBal;
+      finalUserBalance = explicitBal;
+      if (excessUsdc > 0) {
+        _addRevenue(excessUsdc);
+        generateEvent('EXCESS_TO_REVENUE:' + caller + ':' + excessUsdc.toString());
+      }
+    }
+  }
+  
+  const heirsSplit = heirsData.split(',');
+  const heirsArray: string[] = [];
+  for (let j = 0; j < heirsSplit.length; j++) {
+    if (heirsSplit[j].length > 0) heirsArray.push(heirsSplit[j]);
+  }
+  assert(heirsArray.length > 0, 'At least one heir required');
   const maxHeirs = _getMaxHeirs(tier);
-  assert(heirsArray.length > 0 && heirsArray.length <= i32(maxHeirs), 'Invalid heirs');
+  assert(heirsArray.length <= i32(maxHeirs), 'Too many heirs');
+  for (let i = 0; i < heirsArray.length; i++) {
+    assert(heirsArray[i] != caller, 'Cannot be your own heir');
+  }
   
   const now = Context.timestamp();
   const unlockDate = now + interval;
-  const subscriptionExpiry = now + SUBSCRIPTION_PERIOD;
+  const subscriptionExpiry = tier == TIER_FREE ? U64.MAX_VALUE : now + SUBSCRIPTION_PERIOD;
   
-  const vaultData = tier.toString() + '|' + unlockDate.toString() + '|' + interval.toString() + '|' + now.toString() + '|1|' + userBalance.toString() + '|' + heirsData + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey + '|' + subscriptionExpiry.toString() + '|' + now.toString();
+  const vaultData = tier.toString() + '|' + unlockDate.toString() + '|' + interval.toString() + '|' + now.toString() + '|1|' + finalUserBalance.toString() + '|' + heirsData + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey + '|' + subscriptionExpiry.toString() + '|' + now.toString();
   _saveVault(caller, vaultData);
   
   for (let i = 0; i < heirsArray.length; i++) {
     if (heirsArray[i].length > 0) _addVaultToHeir(heirsArray[i], caller);
   }
-  _scheduleASC(caller, unlockDate, requiredGasDeposit);
-  _addVaultBalance(userBalance);
-  _addLockedGas(requiredGasDeposit);
+  _scheduleASC(caller, unlockDate, gasDeposit);
+
+  // Interactions last: USDC transfer after all state changes
+  if (usdcPrice > 0) {
+    _transferUsdcFrom(caller, usdcPrice);
+    _transferUsdcTo(_getAdmin(), usdcPrice);
+  }
   generateEvent('VAULT_CREATED_USDC:' + caller + ':tier=' + tier.toString());
 }
 
@@ -896,8 +1012,6 @@ export function renewSubscriptionWithUsdc(binaryArgs: StaticArray<u8>): void {
   assert(tier > TIER_FREE, 'FREE tier no subscription');
   
   const usdcPrice = _getSubscriptionPriceUsdc(tier);
-  _transferUsdcFrom(caller, usdcPrice);
-  _transferUsdcTo(_getAdmin(), usdcPrice);
   
   const now = Context.timestamp();
   const currentExpiry = U64.parseInt(parts[10]);
@@ -905,6 +1019,10 @@ export function renewSubscriptionWithUsdc(binaryArgs: StaticArray<u8>): void {
   
   parts[10] = newExpiry.toString();
   _saveVault(caller, parts.join('|'));
+
+  // Interactions last: USDC transfer after state save
+  _transferUsdcFrom(caller, usdcPrice);
+  _transferUsdcTo(_getAdmin(), usdcPrice);
   generateEvent('SUBSCRIPTION_RENEWED_USDC:' + caller + ':newExpiry=' + newExpiry.toString());
 }
 
@@ -935,10 +1053,9 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
   
   const tier = U8.parseInt(parts[0]);
   const subscriptionExpiry = U64.parseInt(parts[10]);
+  let claimUsdcPrice: u64 = 0;
   if (tier > TIER_FREE && now >= subscriptionExpiry) {
-    const usdcPrice = _getSubscriptionPriceUsdc(tier);
-    _transferUsdcFrom(caller, usdcPrice);
-    _transferUsdcTo(_getAdmin(), usdcPrice);
+    claimUsdcPrice = _getSubscriptionPriceUsdc(tier);
   }
   
   const feeCollected = _collectAumFee(parts, now);
@@ -951,7 +1068,7 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
     _removeVaultFromHeir(validHeirs[i], ownerAddress);
   }
   
-  _saveDistributedAmount(ownerAddress, vaultBalance, perHeir, validHeirs.length, feeCollected);
+  _saveDistributedAmount(ownerAddress, vaultBalance, perHeir, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : '', parts.length > 8 ? parts[8] : '', parts.length > 9 ? parts[9] : '');
   for (let i = 0; i < validHeirs.length; i++) {
     _addDistributedToHeir(validHeirs[i], ownerAddress);
   }
@@ -960,6 +1077,12 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
   parts[5] = '0';
   _saveVault(ownerAddress, parts.join('|'));
   _cancelASC(ownerAddress);
+
+  // Interactions last: USDC transfer after all state changes
+  if (claimUsdcPrice > 0) {
+    _transferUsdcFrom(caller, claimUsdcPrice);
+    _transferUsdcTo(_getAdmin(), claimUsdcPrice);
+  }
   generateEvent('INHERITANCE_CLAIMED_USDC:' + ownerAddress + ':by=' + caller);
 }
 
@@ -969,9 +1092,9 @@ export function getSubscriptionPriceUsdc(binaryArgs: StaticArray<u8>): StaticArr
   return new Args().add(_getSubscriptionPriceUsdc(tier)).serialize();
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TRIGGER DISTRIBUTION (ASC callback)
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   const receivedCoins = Context.transferredCoins();
@@ -1011,9 +1134,14 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   
   if (now < unlockDate) {
     // Not yet time - reschedule for next check (chain of deferred calls)
-    // Use received coins for gas deposit of next call
+    // Safety: ensure enough gas remains for next deferred call
+    if (receivedCoins < MIN_GAS_PER_CALL) {
+      generateEvent('ASC_CHAIN_BROKEN:' + owner + ':insufficientGas=' + receivedCoins.toString() + ':unlockDate=' + unlockDate.toString());
+      // Don't reschedule - vault remains active, heirs can use manualTrigger after unlockDate
+      return;
+    }
     _scheduleASC(owner, unlockDate, receivedCoins);
-    generateEvent('ASC_RESCHEDULED:' + owner + ':nextCheck=' + (now + MAX_DEFERRED_INTERVAL).toString() + ':unlockDate=' + unlockDate.toString());
+    generateEvent('ASC_RESCHEDULED:' + owner + ':nextCheck=' + (now + MAX_DEFERRED_INTERVAL).toString() + ':unlockDate=' + unlockDate.toString() + ':gasRemaining=' + receivedCoins.toString());
     return;
   }
   
@@ -1028,9 +1156,9 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   _executeDistribution(owner, parts, receivedCoins, now);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // CLAIM INHERITANCE (for heirs)
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /**
  * claimInheritance - heir claims after vault unlocks
@@ -1100,9 +1228,9 @@ export function claimInheritance(binaryArgs: StaticArray<u8>): void {
   _executeDistribution(ownerAddress, parts, 0, now);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // EXECUTE DISTRIBUTION (internal)
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 function _executeDistribution(owner: string, parts: string[], receivedCoins: u64, now: u64): void {
   // Collect final AUM fee
@@ -1120,7 +1248,8 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
     if (heirs[i].length > 0) validHeirs.push(heirs[i]);
   }
   
-  const totalToDistribute = vaultBalance + receivedCoins;
+  // Distribute only vault balance to heirs, gas deposit stays on contract
+  const totalToDistribute = vaultBalance;
   
   if (totalToDistribute > 0 && validHeirs.length > 0) {
     const share = totalToDistribute / (validHeirs.length as u64);
@@ -1136,14 +1265,9 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
       }
     }
     
-    _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected);
+    _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : "", parts.length > 8 ? parts[8] : "", parts.length > 9 ? parts[9] : "");
   }
   
-  // Update totals
-  const interval = U64.parseInt(parts[2]);
-  const lockedGas = _calcRequiredGasDeposit(interval);
-  _subtractVaultBalance(vaultBalance);
-  _subtractLockedGas(lockedGas);
   // Deactivate vault
   parts[4] = '0';
   parts[5] = '0';
@@ -1160,9 +1284,9 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
   generateEvent('DISTRIBUTION_COMPLETE:' + owner + ':total=' + totalToDistribute.toString() + ':fee=' + feeCollected.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // DEACTIVATE VAULT
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -1194,11 +1318,6 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
     if (heirs[i].length > 0) _removeVaultFromHeir(heirs[i], caller);
   }
   
-  // Update totals
-  const interval = U64.parseInt(parts[2]);
-  const lockedGas = _calcRequiredGasDeposit(interval);
-  _subtractVaultBalance(vaultBalance);
-  _subtractLockedGas(lockedGas);
   parts[4] = '0';
   parts[5] = '0';
   _saveVault(caller, parts.join('|'));
@@ -1206,9 +1325,9 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   generateEvent('VAULT_DEACTIVATED:' + caller);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // UPDATE PAYLOAD
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function updatePayload(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -1227,9 +1346,13 @@ export function updatePayload(binaryArgs: StaticArray<u8>): void {
   const payloadSize = newPayload.length as u32;
   const maxPayload = _getMaxPayload(tier);
   assert(payloadSize <= maxPayload, 'Payload too large');
+  assert(!_containsPipe(newPayload), 'Payload cannot contain pipe character');
+  assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
+  assert(!_containsPipe(encryptedKey), 'EncryptedKey cannot contain pipe');
   
   if (arweaveTxId.length > 0) {
     assert(tier >= TIER_VAULT_PRO, 'Arweave requires PRO+');
+  assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
   }
   
   parts[7] = newPayload;
@@ -1240,9 +1363,9 @@ export function updatePayload(binaryArgs: StaticArray<u8>): void {
   generateEvent('PAYLOAD_UPDATED:' + caller);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // UPDATE HEIRS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function updateHeirs(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -1272,7 +1395,7 @@ export function updateHeirs(binaryArgs: StaticArray<u8>): void {
   for (let i: u32 = 0; i < heirsCount; i++) {
     const heir = args.nextString().unwrap();
     assert(heir != caller, 'Cannot be own heir');
-    newHeirsData += heir + ',';
+    newHeirsData += (i > 0 ? ',' : '') + heir;
     _addVaultToHeir(heir, caller);
   }
   
@@ -1282,9 +1405,9 @@ export function updateHeirs(binaryArgs: StaticArray<u8>): void {
   generateEvent('HEIRS_UPDATED:' + caller);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // UPDATE INTERVAL
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function updateInterval(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -1297,6 +1420,7 @@ export function updateInterval(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const newInterval = args.nextU64().unwrap();
   assert(newInterval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short');
+  assert(newInterval <= MAX_HEARTBEAT_INTERVAL, 'Interval too long (max 1 year)');
   
   parts[2] = newInterval.toString();
   _saveVault(caller, parts.join('|'));
@@ -1304,9 +1428,9 @@ export function updateInterval(binaryArgs: StaticArray<u8>): void {
   generateEvent('INTERVAL_UPDATED:' + caller + ':' + newInterval.toString());
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // READ-ONLY FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function getVault(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
@@ -1398,23 +1522,6 @@ export function getTotalAumFees(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
   return u64ToBytes(_getTotalAumFees());
 }
 
-export function getTotalVaultBalances(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
-  return u64ToBytes(_getTotalVaultBalances());
-}
-
-export function getTotalLockedGas(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
-  return u64ToBytes(_getTotalLockedGas());
-}
-
-export function getAdminWithdrawable(_binaryArgs: StaticArray<u8>): StaticArray<u8> {
-  // Available = tracked revenue (subscriptions + excess)
-  const vaultBalances = _getTotalVaultBalances();
-  const lockedGas = _getTotalLockedGas();
-  const revenue = _getTotalRevenue();
-  const available = revenue;
-  return u64ToBytes(available);
-}
-
 export function hasVault(binaryArgs: StaticArray<u8>): StaticArray<u8> {
   const args = new Args(binaryArgs);
   const owner = args.nextString().unwrap();
@@ -1463,9 +1570,9 @@ export function getDistributedInfo(binaryArgs: StaticArray<u8>): StaticArray<u8>
   return Storage.get(key);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ADMIN FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function updateOracle(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
@@ -1476,13 +1583,24 @@ export function updateOracle(binaryArgs: StaticArray<u8>): void {
   generateEvent('ORACLE_UPDATED:' + newOracle);
 }
 
-export function transferAdmin(binaryArgs: StaticArray<u8>): void {
+export function proposeAdmin(binaryArgs: StaticArray<u8>): void {
   const caller = Context.caller().toString();
   assert(caller == _getAdmin(), 'Only admin');
   const args = new Args(binaryArgs);
   const newAdmin = args.nextString().unwrap();
-  Storage.set(stringToBytes(ADMIN_KEY), stringToBytes(newAdmin));
-  generateEvent('ADMIN_TRANSFERRED:' + newAdmin);
+  Storage.set(stringToBytes(PENDING_ADMIN_KEY), stringToBytes(newAdmin));
+  generateEvent('ADMIN_PROPOSED:' + newAdmin);
+}
+
+export function acceptAdmin(_: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  const key = stringToBytes(PENDING_ADMIN_KEY);
+  assert(Storage.has(key), 'No pending admin transfer');
+  const pending = bytesToString(Storage.get(key));
+  assert(caller == pending, 'Only proposed admin can accept');
+  Storage.set(stringToBytes(ADMIN_KEY), stringToBytes(caller));
+  Storage.del(key);
+  generateEvent('ADMIN_TRANSFERRED:' + caller);
 }
 
 export function adminWithdraw(binaryArgs: StaticArray<u8>): void {
@@ -1492,22 +1610,59 @@ export function adminWithdraw(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const amount = args.nextU64().unwrap();
   
-  // Calculate what admin can withdraw:
-  // contractBalance - vaultBalances - lockedGas = available for admin
-  // Available = tracked revenue (subscriptions + excess)
-  const vaultBalances = _getTotalVaultBalances();
-  const lockedGas = _getTotalLockedGas();
+  // SECURITY: Only allow withdrawing protocol revenue, not user funds!
+  const availableRevenue = _getTotalRevenue();
+  assert(amount <= availableRevenue, 'Cannot withdraw more than protocol revenue');
   
-  const revenue = _getTotalRevenue();
-  const available = revenue;
-  
-  assert(amount <= available, 'Cannot withdraw user funds or locked gas');
-  
+  // Subtract from tracked revenue
   _subtractRevenue(amount);
+  // Safety: ensure contract keeps enough for all vaults
+  assert(balance() >= amount, "Insufficient contract balance");
+  
   transferCoins(new Address(caller), amount);
-  generateEvent('ADMIN_WITHDRAW:' + amount.toString() + ':available=' + available.toString() + ':vaultBalances=' + vaultBalances.toString() + ':lockedGas=' + lockedGas.toString());
+  generateEvent('ADMIN_WITHDRAW:' + amount.toString() + ':remaining=' + (_getTotalRevenue()).toString());
 }
 
+// Admin withdraw accumulated gas excess (returned coins from cancelled ASCs)
+export function adminWithdrawGasExcess(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  assert(caller == _getAdmin(), 'Only admin');
+  
+  const args = new Args(binaryArgs);
+  const amount = args.nextU64().unwrap();
+  
+  const available = _getGasExcess();
+  assert(amount <= available, 'Cannot withdraw more than gas excess');
+  
+  // Safety: ensure contract keeps enough for all vaults
+  const contractBal = balance();
+  assert(contractBal >= amount, 'Insufficient contract balance');
+  _subtractGasExcess(amount);
+  transferCoins(new Address(caller), amount);
+  generateEvent('ADMIN_GAS_EXCESS_WITHDRAW:' + amount.toString() + ':remaining=' + _getGasExcess().toString());
+}
+// adminEmergencyWithdraw removed - was duplicate of adminWithdraw
+
+
 export function manualTrigger(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  const args = new Args(binaryArgs);
+  const ownerAddress = args.nextString().unwrap();
+  
+  // Only admin, owner, or a beneficiary of this vault can trigger
+  const isAdmin = caller == _getAdmin();
+  const isOwner = caller == ownerAddress;
+  let isHeir = false;
+  if (_vaultExists(ownerAddress)) {
+    const data = _loadVault(ownerAddress);
+    const parts = data.split('|');
+    const heirsStr = parts[6];
+    const heirsArr = heirsStr.split(',');
+    for (let i = 0; i < heirsArr.length; i++) {
+      if (heirsArr[i] == caller) { isHeir = true; break; }
+    }
+  }
+  assert(isAdmin || isOwner || isHeir, 'Only admin, owner, or heir can trigger');
+  
   triggerDistribution(binaryArgs);
 }
