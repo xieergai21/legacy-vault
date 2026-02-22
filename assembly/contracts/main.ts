@@ -480,6 +480,7 @@ function _isSubscriptionActive(parts: string[], now: u64): bool {
 function _timestampToPeriod(timestampMs: u64): u64 {
   const nowPeriod = currentPeriod();
   const nowTimestamp = Context.timestamp();
+  assert(timestampMs > nowTimestamp, 'Target timestamp must be in the future');
   const diffMs = timestampMs - nowTimestamp;
   const diffPeriods = diffMs / PERIOD_DURATION_MS;
   return nowPeriod + diffPeriods;
@@ -697,7 +698,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     const admin = _getAdmin();
     if (admin.length > 0) {
       transferCoins(new Address(admin), subscriptionPayment);
-      _addRevenue(subscriptionPayment);
+      // Revenue NOT tracked — MAS already left contract via transferCoins
       generateEvent('SUBSCRIPTION_PAID:' + caller + ':tier=' + tier.toString() + ':amount=' + subscriptionPayment.toString());
     }
   }
@@ -916,7 +917,7 @@ export function renewSubscription(binaryArgs: StaticArray<u8>): void {
   const admin = _getAdmin();
   if (admin.length > 0) {
     transferCoins(new Address(admin), subscriptionPayment);
-    _addRevenue(subscriptionPayment);
+    // Revenue NOT tracked — MAS already left contract via transferCoins
   }
   
   // Refund excess
@@ -992,14 +993,19 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   const heirsSplit = heirsData.split(',');
   const heirsArray: string[] = [];
   for (let j = 0; j < heirsSplit.length; j++) {
-    if (heirsSplit[j].length > 0) heirsArray.push(heirsSplit[j]);
+    const heir = heirsSplit[j];
+    assert(heir.length > 0, 'Heir address cannot be empty');
+    assert(!_containsPipe(heir), 'Heir address cannot contain pipe');
+    assert(!heir.includes(','), 'Heir address cannot contain comma');
+    assert(heir != caller, 'Cannot be your own heir');
+    for (let k = 0; k < heirsArray.length; k++) {
+      assert(heirsArray[k] != heir, 'Duplicate heir address');
+    }
+    heirsArray.push(heir);
   }
   assert(heirsArray.length > 0, 'At least one heir required');
   const maxHeirs = _getMaxHeirs(tier);
   assert(heirsArray.length <= i32(maxHeirs), 'Too many heirs');
-  for (let i = 0; i < heirsArray.length; i++) {
-    assert(heirsArray[i] != caller, 'Cannot be your own heir');
-  }
   
   const now = Context.timestamp();
   const unlockDate = now + interval;
@@ -1082,11 +1088,17 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
   
   const feeCollected = _collectAumFee(parts, now);
   const vaultBalance = U64.parseInt(parts[5]);
-  const validHeirs = heirs.filter(h => h.length > 0);
+  const validHeirs: string[] = [];
+  for (let i = 0; i < heirs.length; i++) {
+    if (heirs[i].length > 0) validHeirs.push(heirs[i]);
+  }
   const perHeir = vaultBalance / u64(validHeirs.length);
+  const remainder = vaultBalance % u64(validHeirs.length);
   
   for (let i = 0; i < validHeirs.length; i++) {
-    if (perHeir > 0) transferCoins(new Address(validHeirs[i]), perHeir);
+    let amount = perHeir;
+    if (i == 0) amount += remainder;
+    if (amount > 0) transferCoins(new Address(validHeirs[i]), amount);
     _removeVaultFromHeir(validHeirs[i], ownerAddress);
   }
   
@@ -1242,7 +1254,7 @@ export function claimInheritance(binaryArgs: StaticArray<u8>): void {
     const admin = _getAdmin();
     if (admin.length > 0) {
       transferCoins(new Address(admin), subscriptionPayment);
-      _addRevenue(subscriptionPayment);
+      // Revenue NOT tracked — MAS already left contract via transferCoins
     }
     
     generateEvent('SUBSCRIPTION_PAID_BY_HEIR:' + caller + ':owner=' + ownerAddress + ':amount=' + subscriptionPayment.toString());
