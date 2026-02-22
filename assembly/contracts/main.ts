@@ -275,6 +275,15 @@ function _transferUsdcTo(to: string, amount: u64): void {
   call(new Address(USDC_CONTRACT), 'transfer', args, 0);
 }
 
+// Transfer USDC directly from sender to recipient (single transferFrom)
+function _transferUsdcDirect(from: string, to: string, amount: u64): void {
+  const args = new Args()
+    .add(from)
+    .add(to)
+    .add(amount);
+  call(new Address(USDC_CONTRACT), 'transferFrom', args, 0);
+}
+
 // Get USDC subscription price (in USDC cents, 6 decimals)
 function _getSubscriptionPriceUsdc(tier: u32): u64 {
   if (tier == 0) return 0;
@@ -411,11 +420,18 @@ function _saveDistributedAmount(owner: string, total: u64, perHeir: u64, heirsCo
 
 function _calculateAumFee(balance: u64, feeBps: u64, lastCollection: u64, now: u64): u64 {
   if (feeBps == 0 || balance == 0) return 0;
+  if (now <= lastCollection) return 0;
   const timePassed = now - lastCollection;
   // fee = balance * (feeBps / 10000) * (timePassed / MS_PER_YEAR)
-  // Hourly precision to avoid overflow
+  // Minute precision: multiply before divide to avoid rounding to zero.
+  // Old formula lost precision: (annualFee / 8760) * (timePassed / 3600000)
+  //   -> both divisions truncate independently, fee=0 for small vaults/short intervals
+  // New: annualFee * minutesElapsed / MINUTES_PER_YEAR
+  //   -> single division, safe for balances up to ~6.8M MAS (covers all tier limits)
   const annualFee = balance * feeBps / BPS_DENOMINATOR;
-  const fee = (annualFee / 8760) * (timePassed / 3600000);
+  const minutesElapsed = timePassed / 60000;
+  if (minutesElapsed == 0) return 0;
+  const fee = annualFee * minutesElapsed / 525600;
   return fee;
 }
 
@@ -435,10 +451,11 @@ function _collectAumFee(parts: string[], now: u64): u64 {
   parts[5] = newBalance.toString();
   parts[11] = now.toString(); // Update lastFeeCollection
   
-  // Transfer fee to admin
-  const admin = _getAdmin();
-  if (admin.length > 0 && fee > 0) {
-    transferCoins(new Address(admin), fee);
+  // Accumulate fee in revenue pool (admin withdraws via adminWithdraw)
+  // SECURITY: Do NOT transferCoins here — contract holds funds for multiple vaults.
+  // Immediate transfer could spend MAS belonging to other vaults.
+  if (fee > 0) {
+    _addRevenue(fee);
     _addAumFees(fee);
   }
   
@@ -580,6 +597,12 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   for (let i: u32 = 0; i < heirsCount; i++) {
     const heir = args.nextString().unwrap();
     assert(heir != caller, 'Cannot be own heir');
+    assert(!_containsPipe(heir), 'Heir address cannot contain pipe');
+    assert(!heir.includes(','), 'Heir address cannot contain comma');
+    assert(heir.length > 0, 'Heir address cannot be empty');
+    for (let j = 0; j < heirsArray.length; j++) {
+      assert(heirsArray[j] != heir, 'Duplicate heir address');
+    }
     heirsArray.push(heir);
     heirsData += (i > 0 ? ',' : '') + heir;
   }
@@ -813,7 +836,8 @@ export function deposit(_binaryArgs: StaticArray<u8>): void {
   const unlockDate = U64.parseInt(parts[1]);
   assert(now < unlockDate, 'Vault expired');
   
-  // Note: deposit allowed even with expired subscription
+  // Block deposit if subscription expired — funds would be locked
+  assert(_isSubscriptionActive(parts, now), 'Subscription expired, renew before depositing');
   
   const currentBalance = U64.parseInt(parts[5]);
   const newBalance = currentBalance + amount;
@@ -991,8 +1015,7 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
 
   // Interactions last: USDC transfer after all state changes
   if (usdcPrice > 0) {
-    _transferUsdcFrom(caller, usdcPrice);
-    _transferUsdcTo(_getAdmin(), usdcPrice);
+    _transferUsdcDirect(caller, _getAdmin(), usdcPrice);
   }
   generateEvent('VAULT_CREATED_USDC:' + caller + ':tier=' + tier.toString());
 }
@@ -1021,8 +1044,7 @@ export function renewSubscriptionWithUsdc(binaryArgs: StaticArray<u8>): void {
   _saveVault(caller, parts.join('|'));
 
   // Interactions last: USDC transfer after state save
-  _transferUsdcFrom(caller, usdcPrice);
-  _transferUsdcTo(_getAdmin(), usdcPrice);
+  _transferUsdcDirect(caller, _getAdmin(), usdcPrice);
   generateEvent('SUBSCRIPTION_RENEWED_USDC:' + caller + ':newExpiry=' + newExpiry.toString());
 }
 
@@ -1080,8 +1102,7 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
 
   // Interactions last: USDC transfer after all state changes
   if (claimUsdcPrice > 0) {
-    _transferUsdcFrom(caller, claimUsdcPrice);
-    _transferUsdcTo(_getAdmin(), claimUsdcPrice);
+    _transferUsdcDirect(caller, _getAdmin(), claimUsdcPrice);
   }
   generateEvent('INHERITANCE_CLAIMED_USDC:' + ownerAddress + ':by=' + caller);
 }
@@ -1097,6 +1118,9 @@ export function getSubscriptionPriceUsdc(binaryArgs: StaticArray<u8>): StaticArr
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
+  // SECURITY: Only ASC self-calls allowed. External callers must use manualTrigger.
+  assert(Context.caller().toString() == Context.callee().toString(), 'Only ASC self-call allowed');
+
   const receivedCoins = Context.transferredCoins();
   if (receivedCoins < ORACLE_FEE) {
     generateEvent('TRIGGER_REJECTED:insufficient_gas');
@@ -1392,9 +1416,17 @@ export function updateHeirs(binaryArgs: StaticArray<u8>): void {
   assert(heirsCount > 0, 'Need at least 1 heir');
   
   let newHeirsData = '';
+  let newHeirsArray: string[] = [];
   for (let i: u32 = 0; i < heirsCount; i++) {
     const heir = args.nextString().unwrap();
     assert(heir != caller, 'Cannot be own heir');
+    assert(!_containsPipe(heir), 'Heir address cannot contain pipe');
+    assert(!heir.includes(','), 'Heir address cannot contain comma');
+    assert(heir.length > 0, 'Heir address cannot be empty');
+    for (let j = 0; j < newHeirsArray.length; j++) {
+      assert(newHeirsArray[j] != heir, 'Duplicate heir address');
+    }
+    newHeirsArray.push(heir);
     newHeirsData += (i > 0 ? ',' : '') + heir;
     _addVaultToHeir(heir, caller);
   }
@@ -1417,15 +1449,38 @@ export function updateInterval(binaryArgs: StaticArray<u8>): void {
   const parts = data.split('|');
   assert(parts[4] == '1', 'Vault not active');
   
+  const now = Context.timestamp();
+  assert(_isSubscriptionActive(parts, now), 'Subscription expired');
+  
   const args = new Args(binaryArgs);
   const newInterval = args.nextU64().unwrap();
   assert(newInterval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short');
   assert(newInterval <= MAX_HEARTBEAT_INTERVAL, 'Interval too long (max 1 year)');
   
+  // User must send gas for new ASC registration
+  const transferred = Context.transferredCoins();
+  const minGas = _calcMinGasDeposit(newInterval) + ORACLE_FEE;
+  assert(transferred >= minGas, 'Must send gas for ASC reschedule');
+  const gasFunding = transferred - ORACLE_FEE;
+  
+  // Cancel old ASC (coins returned to contract as gas excess)
+  _cancelASC(caller);
+  
+  // Recalculate unlockDate from lastPing + newInterval
+  const lastPing = U64.parseInt(parts[3]);
+  const newUnlockDate = lastPing + newInterval;
+  
+  // If new unlockDate is already in the past, use now + newInterval
+  const effectiveUnlockDate = newUnlockDate > now ? newUnlockDate : now + newInterval;
+  
+  parts[1] = effectiveUnlockDate.toString();
   parts[2] = newInterval.toString();
   _saveVault(caller, parts.join('|'));
   
-  generateEvent('INTERVAL_UPDATED:' + caller + ':' + newInterval.toString());
+  // Schedule new ASC with updated timing
+  _scheduleASC(caller, effectiveUnlockDate, gasFunding);
+  
+  generateEvent('INTERVAL_UPDATED:' + caller + ':' + newInterval.toString() + ':newUnlock=' + effectiveUnlockDate.toString());
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -1649,20 +1704,34 @@ export function manualTrigger(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const ownerAddress = args.nextString().unwrap();
   
+  // Vault must exist
+  assert(_vaultExists(ownerAddress), 'No vault');
+  
+  const data = _loadVault(ownerAddress);
+  const parts = data.split('|');
+  
   // Only admin, owner, or a beneficiary of this vault can trigger
   const isAdmin = caller == _getAdmin();
   const isOwner = caller == ownerAddress;
   let isHeir = false;
-  if (_vaultExists(ownerAddress)) {
-    const data = _loadVault(ownerAddress);
-    const parts = data.split('|');
-    const heirsStr = parts[6];
-    const heirsArr = heirsStr.split(',');
-    for (let i = 0; i < heirsArr.length; i++) {
-      if (heirsArr[i] == caller) { isHeir = true; break; }
-    }
+  const heirsStr = parts[6];
+  const heirsArr = heirsStr.split(',');
+  for (let i = 0; i < heirsArr.length; i++) {
+    if (heirsArr[i] == caller) { isHeir = true; break; }
   }
   assert(isAdmin || isOwner || isHeir, 'Only admin, owner, or heir can trigger');
   
-  triggerDistribution(binaryArgs);
+  // SECURITY: Must be past unlockDate to prevent breaking ASC chain
+  const now = Context.timestamp();
+  const unlockDate = U64.parseInt(parts[1]);
+  assert(now >= unlockDate, 'Vault not yet unlocked, cannot trigger manually');
+  
+  // Vault must be active
+  assert(parts[4] == '1', 'Vault is not active');
+  
+  // Check subscription
+  assert(_isSubscriptionActive(parts, now), 'Subscription expired, heir must pay via claimInheritance');
+  
+  // Execute distribution directly (bypass triggerDistribution which is ASC-only)
+  _executeDistribution(ownerAddress, parts, 0, now);
 }

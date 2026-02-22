@@ -6,8 +6,7 @@
  * ╚═══════════════════════════════════════════════════════════════════════════╝
  */
 
-import { Args } from '@massalabs/massa-as-sdk';
-import { Serializable } from '@massalabs/as-types';
+import { Args, Serializable, Result } from '@massalabs/as-types';
 
 // ============================================================================
 // EVENT TYPES
@@ -219,15 +218,4 @@ export class CreateVaultParams implements Serializable {
   }
 }
 
-/**
- * Call result with error
- */
-class Result<T> {
-  value: T;
-  error: bool;
-  
-  constructor(value: T, error: bool = false) {
-    this.value = value;
-    this.error = error;
-  }
-}
+// Result<T> imported from @massalabs/as-types
