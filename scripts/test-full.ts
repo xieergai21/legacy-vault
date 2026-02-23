@@ -9,7 +9,7 @@ import * as dotenv from 'dotenv';
 import { Account, Web3Provider, SmartContract, Args } from '@massalabs/massa-web3';
 dotenv.config();
 
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || 'AS12weuJrVBNWFAiwky5H15vihKqKg6WDVVUuzawidZfMHBaoNgms';
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS || 'AS12Nq1f1CWUpcBbwVo1RMigedV5G1LKGSjbp99AJS7zGzna2kpCZ';
 const OWNER_KEY = process.env.DEPLOYER_PRIVATE_KEY || '';
 const HEIR_KEY = process.env.HEIR_PRIVATE_KEY || '';
 const ADMIN_KEY = process.env.ADMIN_PRIVATE_KEY || '';

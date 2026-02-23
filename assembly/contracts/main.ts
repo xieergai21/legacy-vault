@@ -1392,7 +1392,6 @@ export function updatePayload(binaryArgs: StaticArray<u8>): void {
   
   if (arweaveTxId.length > 0) {
     assert(tier >= TIER_VAULT_PRO, 'Arweave requires PRO+');
-  assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
   }
   
   parts[7] = newPayload;
