@@ -1184,7 +1184,11 @@ export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   // Check subscription
   if (!_isSubscriptionActive(parts, now)) {
     // Subscription expired - DON'T distribute, wait for heir to pay
-    generateEvent('VAULT_UNLOCKED_PENDING_SUBSCRIPTION:' + owner);
+    // Track returned ASC gas so it's not lost in general balance
+    if (receivedCoins > 0) {
+      _addGasExcess(receivedCoins);
+    }
+    generateEvent('VAULT_UNLOCKED_PENDING_SUBSCRIPTION:' + owner + ':gasReturned=' + receivedCoins.toString());
     return;
   }
   

@@ -148,7 +148,7 @@ The app includes React Error Boundary for crash recovery, custom confirmation mo
 
 | Network | Address | Status |
 |---------|---------|--------|
-| Buildnet | `AS12rMK4dyZR6Xxhr9ySrv4ADvawoBKmupwKHuoYh6uHw8TjJNmzr` | Active |
+| Buildnet | `AS12weuJrVBNWFAiwky5H15vihKqKg6WDVVUuzawidZfMHBaoNgms` | Active |
 | Mainnet | Coming soon | — |
 
 ### Core Functions
