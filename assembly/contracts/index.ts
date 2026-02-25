@@ -83,3 +83,7 @@ export {
   VaultStats,
   CreateVaultParams,
 } from './types';
+export { depositUsdc } from "./main";
+export { withdrawUsdc } from "./main";
+export { claimUsdc } from "./main";
+export { getUsdcBalance } from "./main";

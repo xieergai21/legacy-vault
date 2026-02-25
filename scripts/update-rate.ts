@@ -1,11 +1,12 @@
 /**
  * LEGACY VAULT - UPDATE RATE SCRIPT
  * Updates MAS/USD rate in contract via CoinGecko API
+ * Rate stored in MILLICENTS (1/1000 cent). Example: $0.00431 = 431 millicents
  * 
  * Usage:
  *   npx ts-node update-rate.ts          # Update rate
  *   npx ts-node update-rate.ts --check  # Only check current rate
- *   npx ts-node update-rate.ts --force 5 # Force set 5 cents
+ *   npx ts-node update-rate.ts --force 431 # Force set 431 millicents ($0.00431)
  */
 
 import * as dotenv from 'dotenv';
@@ -23,7 +24,7 @@ const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price?ids=massa&v
 const config = {
   // Oracle private key (must match ORACLE_ADDRESS from deploy)
   oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || '',
-  contractAddress: process.env.CONTRACT_ADDRESS || 'AS1D5fSHU83ktyGLeb5X143JeFgEqS9M1VAqsajb42vYbkg1Cfo7',
+  contractAddress: process.env.CONTRACT_ADDRESS || 'AS13iLEzS1MqZQRBFuYhzx2XuYP4gehqqHAW3LkZNCx2xxn1dPbK',
 };
 
 function toNanoMassa(massa: number): bigint {
@@ -45,14 +46,14 @@ async function fetchMasPrice(): Promise<number> {
     throw new Error('Invalid price data from CoinGecko');
   }
   
-  console.log(`   💵 Current rate: $${price.toFixed(4)} per 1 MAS`);
+  console.log(`   💵 Current rate: $${price.toFixed(5)} per 1 MAS`);
   return price;
 }
 
-function usdToCents(usd: number): number {
-  // Convert USD to cents, rounding to integer
-  // Example: $0.0512 = 5.12 cents → 5 cents
-  return Math.round(usd * 100);
+function usdToMillicents(usd: number): number {
+  // Convert USD to millicents (1/1000 cent), matching contract storage format
+  // Example: $0.00431 → 431 millicents
+  return Math.round(usd * 100_000);
 }
 
 async function getCurrentRate(contract: SmartContract): Promise<bigint> {
@@ -80,6 +81,24 @@ async function updateRate(contract: SmartContract, newRate: bigint, provider: We
   console.log('   ✅ Rate updated successfully!');
 }
 
+function showTierPrices(rate: bigint): void {
+  const tierPrices = [
+    { name: 'FREE', usd: 0 },
+    { name: 'LIGHT', usd: 9.99 },
+    { name: 'VAULT PRO', usd: 29.99 },
+    { name: 'LEGATE', usd: 89.99 },
+  ];
+  
+  for (const tier of tierPrices) {
+    if (tier.usd === 0) {
+      console.log(`   ${tier.name}: FREE`);
+    } else {
+      const masPrice = (tier.usd * 100_000) / Number(rate);
+      console.log(`   ${tier.name}: ${masPrice.toFixed(2)} MAS ($${tier.usd})`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   console.log('═'.repeat(60));
   console.log('🔄 LEGACY VAULT - UPDATE RATE');
@@ -105,36 +124,21 @@ async function main(): Promise<void> {
 
   // Get current rate from contract
   const currentRate = await getCurrentRate(contract);
-  console.log(`\n📊 Current RATE in contract: ${currentRate} cents ($${Number(currentRate) / 100})`);
+  console.log(`\n📊 Current RATE in contract: ${currentRate} millicents ($${(Number(currentRate) / 100_000).toFixed(5)})`);
 
   // If check only - exit
   if (checkOnly) {
-    // Show tier prices
     console.log('\n💰 Tier prices at current rate:');
-    const tierPrices = [
-      { name: 'FREE', usd: 0 },
-      { name: 'LIGHT', usd: 9.99 },
-      { name: 'VAULT PRO', usd: 29.99 },
-      { name: 'LEGATE', usd: 89.99 },
-    ];
-    
-    for (const tier of tierPrices) {
-      if (tier.usd === 0) {
-        console.log(`   ${tier.name}: FREE`);
-      } else {
-        const masPrice = (tier.usd * 100) / Number(currentRate);
-        console.log(`   ${tier.name}: ${masPrice.toFixed(2)} MAS ($${tier.usd})`);
-      }
-    }
+    showTierPrices(currentRate);
     
     // Get real rate for comparison
     try {
       const realPrice = await fetchMasPrice();
-      const realCents = usdToCents(realPrice);
-      console.log(`\n🌐 Real CoinGecko rate: ${realCents} cents ($${realPrice.toFixed(4)})`);
+      const realMillicents = usdToMillicents(realPrice);
+      console.log(`\n🌐 Real CoinGecko rate: ${realMillicents} millicents ($${realPrice.toFixed(5)})`);
       
-      if (Number(currentRate) !== realCents) {
-        console.log(`\n⚠️  MISMATCH! Contract: ${currentRate}¢, Real: ${realCents}¢`);
+      if (Number(currentRate) !== realMillicents) {
+        console.log(`\n⚠️  MISMATCH! Contract: ${currentRate}, Real: ${realMillicents} millicents`);
         console.log(`   Run: npx ts-node update-rate.ts`);
       } else {
         console.log(`\n✅ Rate is current!`);
@@ -147,56 +151,40 @@ async function main(): Promise<void> {
   }
 
   // Determine new rate
-  let newRateCents: number;
+  let newRateMillicents: number;
   
   if (forceRate !== null) {
-    // Force update
-    console.log(`\n🔧 Force setting rate: ${forceRate} cents`);
-    newRateCents = forceRate;
+    console.log(`\n🔧 Force setting rate: ${forceRate} millicents`);
+    newRateMillicents = forceRate;
   } else {
-    // Get from CoinGecko
     const masPrice = await fetchMasPrice();
-    newRateCents = usdToCents(masPrice);
-    console.log(`   📈 Rate in cents: ${newRateCents}¢`);
+    newRateMillicents = usdToMillicents(masPrice);
+    console.log(`   📈 Rate in millicents: ${newRateMillicents}`);
   }
 
   // Check if update needed
-  if (BigInt(newRateCents) === currentRate) {
+  if (BigInt(newRateMillicents) === currentRate) {
     console.log('\n✅ Rate already current, no update needed.');
     return;
   }
 
   // Validation
-  if (newRateCents <= 0 || newRateCents >= 1000000) {
-    throw new Error(`❌ Invalid rate: ${newRateCents}. Must be 1-999999 cents.`);
+  if (newRateMillicents <= 0 || newRateMillicents >= 100_000_000) {
+    throw new Error(`❌ Invalid rate: ${newRateMillicents}. Must be 1-99999999 millicents.`);
   }
 
-  console.log(`\n📝 Updating rate: ${currentRate}¢ → ${newRateCents}¢`);
+  console.log(`\n📝 Updating rate: ${currentRate} → ${newRateMillicents} millicents`);
 
   // Updating
-  await updateRate(contract, BigInt(newRateCents), provider);
+  await updateRate(contract, BigInt(newRateMillicents), provider);
 
   // Checking result
   const updatedRate = await getCurrentRate(contract);
-  console.log(`\n✅ New RATE in contract: ${updatedRate} cents ($${Number(updatedRate) / 100})`);
+  console.log(`\n✅ New RATE in contract: ${updatedRate} millicents ($${(Number(updatedRate) / 100_000).toFixed(5)})`);
 
   // Showing new prices
   console.log('\n💰 Updated tier prices:');
-  const tierPrices = [
-    { name: 'FREE', usd: 0 },
-    { name: 'LIGHT', usd: 9.99 },
-    { name: 'VAULT PRO', usd: 29.99 },
-    { name: 'LEGATE', usd: 89.99 },
-  ];
-  
-  for (const tier of tierPrices) {
-    if (tier.usd === 0) {
-      console.log(`   ${tier.name}: FREE`);
-    } else {
-      const masPrice = (tier.usd * 100) / Number(updatedRate);
-      console.log(`   ${tier.name}: ${masPrice.toFixed(2)} MAS ($${tier.usd})`);
-    }
-  }
+  showTierPrices(updatedRate);
 
   console.log('\n🎉 Done!');
 }

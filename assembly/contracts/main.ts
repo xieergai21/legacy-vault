@@ -727,7 +727,9 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     arweaveTxId + '|' + 
     encryptedKey + '|' +
     subscriptionExpiry.toString() + '|' +
-    now.toString();  // lastFeeCollection
+    now.toString() + '|' +  // lastFeeCollection
+    '0' + '|' +  // usdcBalance (field 12)
+    '';  // usdcClaimed (field 13, empty)
   
   _saveVault(caller, vaultData);
   
@@ -1011,7 +1013,7 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   const unlockDate = now + interval;
   const subscriptionExpiry = tier == TIER_FREE ? U64.MAX_VALUE : now + SUBSCRIPTION_PERIOD;
   
-  const vaultData = tier.toString() + '|' + unlockDate.toString() + '|' + interval.toString() + '|' + now.toString() + '|1|' + finalUserBalance.toString() + '|' + heirsData + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey + '|' + subscriptionExpiry.toString() + '|' + now.toString();
+  const vaultData = tier.toString() + '|' + unlockDate.toString() + '|' + interval.toString() + '|' + now.toString() + '|1|' + finalUserBalance.toString() + '|' + heirsData + '|' + payload + '|' + arweaveTxId + '|' + encryptedKey + '|' + subscriptionExpiry.toString() + '|' + now.toString() + '|0|';
   _saveVault(caller, vaultData);
   
   for (let i = 0; i < heirsArray.length; i++) {
@@ -1128,6 +1130,168 @@ export function getSubscriptionPriceUsdc(binaryArgs: StaticArray<u8>): StaticArr
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TRIGGER DISTRIBUTION (ASC callback)
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USDC VAULT BALANCE FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Deposit USDC into vault for inheritance
+ * Requires prior approve() on USDC contract
+ */
+export function depositUsdc(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  assert(_vaultExists(caller), 'No vault found');
+
+  const data = _loadVault(caller);
+  const parts = data.split('|');
+  assert(parts[4] == '1', 'Vault not active');
+
+  const args = new Args(binaryArgs);
+  const amount = args.nextU64().unwrap();
+  assert(amount > 0, 'Amount must be positive');
+
+  const now = Context.timestamp();
+  assert(_isSubscriptionActive(parts, now), 'Subscription expired');
+
+  // Ensure 14-field format
+  while (parts.length < 14) parts.push('0');
+  if (parts[12] == '') parts[12] = '0';
+
+  // Transfer USDC from caller to contract
+  _transferUsdcFrom(caller, amount);
+
+  // Update USDC balance
+  const currentUsdcBalance = U64.parseInt(parts[12]);
+  parts[12] = (currentUsdcBalance + amount).toString();
+  _saveVault(caller, parts.join('|'));
+
+  generateEvent('USDC_DEPOSITED:' + caller + ':amount=' + amount.toString());
+}
+
+/**
+ * Withdraw USDC from active vault (owner only)
+ */
+export function withdrawUsdc(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+  assert(_vaultExists(caller), 'No vault found');
+
+  const data = _loadVault(caller);
+  const parts = data.split('|');
+  assert(parts[4] == '1', 'Vault not active');
+
+  const args = new Args(binaryArgs);
+  const amount = args.nextU64().unwrap();
+  assert(amount > 0, 'Amount must be positive');
+
+  // Ensure 14-field format
+  while (parts.length < 14) parts.push('0');
+  if (parts[12] == '') parts[12] = '0';
+
+  const currentUsdcBalance = U64.parseInt(parts[12]);
+  assert(amount <= currentUsdcBalance, 'Insufficient USDC balance');
+
+  // Update state first (checks-effects-interactions)
+  parts[12] = (currentUsdcBalance - amount).toString();
+  _saveVault(caller, parts.join('|'));
+
+  // Transfer USDC back to caller
+  _transferUsdcTo(caller, amount);
+
+  generateEvent('USDC_WITHDRAWN:' + caller + ':amount=' + amount.toString());
+}
+
+/**
+ * Claim USDC share after vault distribution (heir only)
+ */
+export function claimUsdc(binaryArgs: StaticArray<u8>): void {
+  const caller = Context.caller().toString();
+
+  const args = new Args(binaryArgs);
+  const ownerAddress = args.nextString().unwrap();
+  assert(_vaultExists(ownerAddress), 'No vault found');
+
+  const data = _loadVault(ownerAddress);
+  const parts = data.split('|');
+  assert(parts[4] == '0', 'Vault still active');
+
+  // Ensure 14-field format
+  while (parts.length < 14) parts.push('');
+  if (parts[12] == '') parts[12] = '0';
+
+  const usdcBalance = U64.parseInt(parts[12]);
+  assert(usdcBalance > 0, 'No USDC to claim');
+
+  // Verify caller is heir
+  const heirs = parts[6].split(',');
+  let isHeir = false;
+  const validHeirs: string[] = [];
+  for (let i = 0; i < heirs.length; i++) {
+    if (heirs[i].length > 0) {
+      validHeirs.push(heirs[i]);
+      if (heirs[i] == caller) isHeir = true;
+    }
+  }
+  assert(isHeir, 'Not an heir');
+
+  // Check not already claimed
+  const claimedStr = parts[13];
+  const claimed: string[] = [];
+  if (claimedStr.length > 0) {
+    const claimedSplit = claimedStr.split(',');
+    for (let i = 0; i < claimedSplit.length; i++) {
+      assert(claimedSplit[i] != caller, 'Already claimed USDC');
+      claimed.push(claimedSplit[i]);
+    }
+  }
+
+  // Calculate share
+  const perHeir = usdcBalance / u64(validHeirs.length);
+  const remainder = usdcBalance % u64(validHeirs.length);
+  let amount = perHeir;
+  if (claimed.length == 0) amount += remainder;
+
+  assert(amount > 0, 'Nothing to claim');
+
+  // Update claimed list
+  claimed.push(caller);
+  parts[13] = claimed.join(',');
+
+  // If all heirs claimed, zero out
+  if (claimed.length >= validHeirs.length) {
+    parts[12] = '0';
+  }
+
+  _saveVault(ownerAddress, parts.join('|'));
+
+  // Transfer USDC to heir
+  _transferUsdcTo(caller, amount);
+
+  generateEvent('USDC_CLAIMED:' + ownerAddress + ':heir=' + caller + ':amount=' + amount.toString());
+}
+
+/**
+ * Get USDC balance of a vault (read-only)
+ */
+export function getUsdcBalance(binaryArgs: StaticArray<u8>): StaticArray<u8> {
+  const args = new Args(binaryArgs);
+  const ownerAddress = args.nextString().unwrap();
+
+  if (!_vaultExists(ownerAddress)) {
+    return new Args().add<u64>(0).serialize();
+  }
+
+  const data = _loadVault(ownerAddress);
+  const parts = data.split('|');
+
+  if (parts.length < 13) {
+    return new Args().add<u64>(0).serialize();
+  }
+
+  const usdcBalance = parts[12].length > 0 ? U64.parseInt(parts[12]) : 0;
+  return new Args().add(usdcBalance).serialize();
+}
 
 export function triggerDistribution(binaryArgs: StaticArray<u8>): void {
   // SECURITY: Only ASC self-calls allowed. External callers must use manualTrigger.
