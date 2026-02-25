@@ -45,6 +45,8 @@ import {
 const VAULT_PREFIX: string = 'VAULT_';
 const ORACLE_KEY: string = 'ORACLE';
 const RATE_KEY: string = 'RATE';
+const RATE_LAST_UPDATE_KEY: string = 'RATE_LAST_UPDATE';
+const RATE_UPDATE_COOLDOWN: u64 = 3600000; // 1 hour in ms
 const ADMIN_KEY: string = 'ADMIN';
 const PENDING_ADMIN_KEY: string = 'PENDING_ADMIN';
 const INITIALIZED_KEY: string = 'INIT';
@@ -105,7 +107,7 @@ const MAX_PAYLOAD_PRO: u32 = 2048;
 const MAX_PAYLOAD_LEGATE: u32 = 5120;
 
 // Other constants
-const MIN_HEARTBEAT_INTERVAL: u64 = 300000; // 5 min for testing // 1 day in ms
+const MIN_HEARTBEAT_INTERVAL: u64 = 86400000; // 1 day in ms
 const MAX_HEARTBEAT_INTERVAL: u64 = 365 * 24 * 60 * 60 * 1000; // 1 year max
 const PERIOD_DURATION_MS: u64 = 16000;
 
@@ -285,7 +287,7 @@ function _transferUsdcDirect(from: string, to: string, amount: u64): void {
 }
 
 // Get USDC subscription price (in USDC cents, 6 decimals)
-function _getSubscriptionPriceUsdc(tier: u32): u64 {
+function _getSubscriptionPriceUsdc(tier: u8): u64 {
   if (tier == 0) return 0;
   if (tier == 1) return 10 * USDC_DECIMALS;   // $10 USDC
   if (tier == 2) return 30 * USDC_DECIMALS;   // $30 USDC
@@ -427,11 +429,12 @@ function _calculateAumFee(balance: u64, feeBps: u64, lastCollection: u64, now: u
   // Old formula lost precision: (annualFee / 8760) * (timePassed / 3600000)
   //   -> both divisions truncate independently, fee=0 for small vaults/short intervals
   // New: annualFee * minutesElapsed / MINUTES_PER_YEAR
-  //   -> single division, safe for balances up to ~6.8M MAS (covers all tier limits)
-  const annualFee = balance * feeBps / BPS_DENOMINATOR;
+  //   -> single division, safe for any balance (divide before multiply)
+  // Divide first to prevent u64 overflow for large balances
+  const annualFee = balance / BPS_DENOMINATOR * feeBps;
   const minutesElapsed = timePassed / 60000;
   if (minutesElapsed == 0) return 0;
-  const fee = annualFee * minutesElapsed / 525600;
+  const fee = annualFee / 525600 * minutesElapsed;
   return fee;
 }
 
@@ -509,7 +512,12 @@ function _scheduleASC(ownerAddress: string, unlockTimestamp: u64, gasDeposit: u6
 function _cancelASC(ownerAddress: string): void {
   const callId = _getDeferredCallId(ownerAddress);
   if (callId.length > 0) {
-    if (deferredCallExists(callId)) deferredCallCancel(callId);
+    if (deferredCallExists(callId)) {
+      const balBefore = balance();
+      deferredCallCancel(callId);
+      const returned = balance() - balBefore;
+      if (returned > 0) _addGasExcess(returned);
+    }
     _deleteDeferredCallId(ownerAddress);
   }
 }
@@ -538,6 +546,12 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
   const args = new Args(binaryArgs);
   const newRate = args.nextU64().unwrap();
   assert(newRate > 0 && newRate < 100000000, 'Rate out of range'); // milicents
+  // Cooldown: 1 hour between rate updates
+  const lastUpdateKey = stringToBytes(RATE_LAST_UPDATE_KEY);
+  if (Storage.has(lastUpdateKey)) {
+    const lastUpdate = bytesToU64(Storage.get(lastUpdateKey));
+    assert(Context.timestamp() - lastUpdate >= RATE_UPDATE_COOLDOWN, 'Rate update cooldown: 1 hour');
+  }
   // Safety: limit rate change to ±50% per update
   const currentRate = _getMassaUsdRate();
   if (currentRate > 0) {
@@ -546,6 +560,7 @@ export function updateRate(binaryArgs: StaticArray<u8>): void {
     assert(newRate >= minAllowed && newRate <= maxAllowed, 'Rate change exceeds 50% limit');
   }
   Storage.set(stringToBytes(RATE_KEY), u64ToBytes(newRate));
+  Storage.set(lastUpdateKey, u64ToBytes(Context.timestamp()));
   generateEvent('RATE_UPDATED:' + newRate.toString());
 }
 
@@ -610,7 +625,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   
   // Parse interval
   const interval = args.nextU64().unwrap();
-  assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short (min 5 min)');
+  assert(interval >= MIN_HEARTBEAT_INTERVAL, 'Interval too short (min 1 day)');
   assert(interval <= MAX_HEARTBEAT_INTERVAL, 'Interval too long (max 1 year)');
   
   // Parse payload
@@ -992,6 +1007,9 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
     }
   }
   
+  const maxBalance = _getMaxBalance(tier);
+  assert(finalUserBalance <= maxBalance, 'Balance exceeds tier limit');
+
   const heirsSplit = heirsData.split(',');
   const heirsArray: string[] = [];
   for (let j = 0; j < heirsSplit.length; j++) {
@@ -1023,7 +1041,7 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
 
   // Interactions last: USDC transfer after all state changes
   if (usdcPrice > 0) {
-    _transferUsdcDirect(caller, _getAdmin(), usdcPrice);
+    const admin = _getAdmin(); if (admin.length > 0) _transferUsdcDirect(caller, admin, usdcPrice);
   }
   generateEvent('VAULT_CREATED_USDC:' + caller + ':tier=' + tier.toString());
 }
@@ -1052,7 +1070,7 @@ export function renewSubscriptionWithUsdc(binaryArgs: StaticArray<u8>): void {
   _saveVault(caller, parts.join('|'));
 
   // Interactions last: USDC transfer after state save
-  _transferUsdcDirect(caller, _getAdmin(), usdcPrice);
+  const renewAdmin = _getAdmin(); if (renewAdmin.length > 0) _transferUsdcDirect(caller, renewAdmin, usdcPrice);
   generateEvent('SUBSCRIPTION_RENEWED_USDC:' + caller + ':newExpiry=' + newExpiry.toString());
 }
 
@@ -1116,7 +1134,7 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
 
   // Interactions last: USDC transfer after all state changes
   if (claimUsdcPrice > 0) {
-    _transferUsdcDirect(caller, _getAdmin(), claimUsdcPrice);
+    const claimAdmin = _getAdmin(); if (claimAdmin.length > 0) _transferUsdcDirect(caller, claimAdmin, claimUsdcPrice);
   }
   generateEvent('INHERITANCE_CLAIMED_USDC:' + ownerAddress + ':by=' + caller);
 }
@@ -1509,11 +1527,11 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
     generateEvent('AUM_FEE_COLLECTED:' + caller + ':' + feeCollected.toString());
   }
   
-  // Return remaining balance
+  // Save state BEFORE transfers (checks-effects-interactions)
   const vaultBalance = U64.parseInt(parts[5]);
-  if (vaultBalance > 0) {
-    transferCoins(new Address(caller), vaultBalance);
-  }
+  parts[4] = '0';
+  parts[5] = '0';
+  _saveVault(caller, parts.join('|'));
   
   // Remove from heir lists
   const heirsStr = parts[6];
@@ -1522,9 +1540,10 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
     if (heirs[i].length > 0) _removeVaultFromHeir(heirs[i], caller);
   }
   
-  parts[4] = '0';
-  parts[5] = '0';
-  _saveVault(caller, parts.join('|'));
+  // Interactions last: return remaining balance
+  if (vaultBalance > 0) {
+    transferCoins(new Address(caller), vaultBalance);
+  }
   
   generateEvent('VAULT_DEACTIVATED:' + caller);
 }
