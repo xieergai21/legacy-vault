@@ -9,8 +9,8 @@
  * - Heir can pay expired subscription to claim
  * - Distribution history for heirs
  * 
- * Vault Data Structure (12 fields):
- * tier|unlockDate|interval|lastPing|isActive|vaultBalance|heirs|payload|arweave|encKey|subscriptionExpiry|lastFeeCollection
+ * Vault Data Structure (14 fields):
+ * tier|unlockDate|interval|lastPing|isActive|vaultBalance|heirs|payload|arweave|encKey|subscriptionExpiry|lastFeeCollection|usdcBalance|usdcClaimed
  */
 
 import {
@@ -254,6 +254,13 @@ function _getMaxPayload(tier: u8): u32 {
   if (tier == TIER_VAULT_PRO) return MAX_PAYLOAD_PRO;
   return MAX_PAYLOAD_LEGATE;
 }
+function _getMaxUsdcBalance(tier: u8): u64 {
+  if (tier == TIER_FREE) return 50 * USDC_DECIMALS;        // $50
+  if (tier == TIER_LIGHT) return 1000 * USDC_DECIMALS;     // $1,000
+  if (tier == TIER_VAULT_PRO) return 10000 * USDC_DECIMALS; // $10,000
+  return U64.MAX_VALUE;                                      // LEGATE: unlimited
+}
+
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // ADMIN AND STORAGE FUNCTIONS
@@ -730,7 +737,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
   }
   
   // Vault data: 12 fields
-  // tier|unlockDate|interval|lastPing|isActive|vaultBalance|heirs|payload|arweave|encKey|subscriptionExpiry|lastFeeCollection
+  // tier|unlockDate|interval|lastPing|isActive|vaultBalance|heirs|payload|arweave|encKey|subscriptionExpiry|lastFeeCollection|usdcBalance|usdcClaimed
   const vaultData = tier.toString() + '|' + 
     unlockDate.toString() + '|' + 
     interval.toString() + '|' + 
@@ -1126,13 +1133,31 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
   for (let i = 0; i < validHeirs.length; i++) {
     _addDistributedToHeir(validHeirs[i], ownerAddress);
   }
-  
+  // Distribute USDC if any
+  while (parts.length < 14) parts.push('');
+  if (parts[12] == '') parts[12] = '0';
+  const usdcBalance = U64.parseInt(parts[12]);
+
   parts[4] = '0';
   parts[5] = '0';
+  parts[12] = '0';
   _saveVault(ownerAddress, parts.join('|'));
   _cancelASC(ownerAddress);
 
-  // Interactions last: USDC transfer after all state changes
+  // Interactions last: distribute USDC to heirs
+  if (usdcBalance > 0 && validHeirs.length > 0) {
+    const usdcShare = usdcBalance / u64(validHeirs.length);
+    const usdcRemainder = usdcBalance % u64(validHeirs.length);
+    for (let j = 0; j < validHeirs.length; j++) {
+      let usdcAmt = usdcShare;
+      if (j == 0) usdcAmt += usdcRemainder;
+      if (usdcAmt > 0) {
+        _transferUsdcTo(validHeirs[j], usdcAmt);
+        generateEvent('USDC_INHERITED:' + validHeirs[j] + ':' + usdcAmt.toString());
+      }
+    }
+  }
+  // USDC subscription payment
   if (claimUsdcPrice > 0) {
     const claimAdmin = _getAdmin(); if (claimAdmin.length > 0) _transferUsdcDirect(caller, claimAdmin, claimUsdcPrice);
   }
@@ -1174,16 +1199,19 @@ export function depositUsdc(binaryArgs: StaticArray<u8>): void {
   assert(_isSubscriptionActive(parts, now), 'Subscription expired');
 
   // Ensure 14-field format
-  while (parts.length < 14) parts.push('0');
+  while (parts.length < 14) parts.push('');
   if (parts[12] == '') parts[12] = '0';
 
-  // Transfer USDC from caller to contract
-  _transferUsdcFrom(caller, amount);
-
-  // Update USDC balance
+  // Update state BEFORE transfer (checks-effects-interactions)
   const currentUsdcBalance = U64.parseInt(parts[12]);
+  const tier = U8.parseInt(parts[0]);
+  const maxUsdcBal = _getMaxUsdcBalance(tier);
+  assert(currentUsdcBalance + amount <= maxUsdcBal, 'USDC balance exceeds tier limit');
   parts[12] = (currentUsdcBalance + amount).toString();
   _saveVault(caller, parts.join('|'));
+
+  // Interaction last: transfer USDC from caller to contract
+  _transferUsdcFrom(caller, amount);
 
   generateEvent('USDC_DEPOSITED:' + caller + ':amount=' + amount.toString());
 }
@@ -1204,7 +1232,7 @@ export function withdrawUsdc(binaryArgs: StaticArray<u8>): void {
   assert(amount > 0, 'Amount must be positive');
 
   // Ensure 14-field format
-  while (parts.length < 14) parts.push('0');
+  while (parts.length < 14) parts.push('');
   if (parts[12] == '') parts[12] = '0';
 
   const currentUsdcBalance = U64.parseInt(parts[12]);
@@ -1259,6 +1287,7 @@ export function claimUsdc(binaryArgs: StaticArray<u8>): void {
   if (claimedStr.length > 0) {
     const claimedSplit = claimedStr.split(',');
     for (let i = 0; i < claimedSplit.length; i++) {
+      if (claimedSplit[i].length == 0 || claimedSplit[i] == '0') continue;
       assert(claimedSplit[i] != caller, 'Already claimed USDC');
       claimed.push(claimedSplit[i]);
     }
@@ -1490,11 +1519,29 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
     _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : "", parts.length > 8 ? parts[8] : "", parts.length > 9 ? parts[9] : "");
   }
   
+  // Distribute USDC if any
+  while (parts.length < 14) parts.push('');
+  if (parts[12] == '') parts[12] = '0';
+  const usdcBalance = U64.parseInt(parts[12]);
+  if (usdcBalance > 0 && validHeirs.length > 0) {
+    const usdcShare = usdcBalance / u64(validHeirs.length);
+    const usdcRemainder = usdcBalance % u64(validHeirs.length);
+    for (let j = 0; j < validHeirs.length; j++) {
+      let usdcAmount = usdcShare;
+      if (j == 0) usdcAmount += usdcRemainder;
+      if (usdcAmount > 0) {
+        _transferUsdcTo(validHeirs[j], usdcAmount);
+        generateEvent('USDC_INHERITED:' + validHeirs[j] + ':' + usdcAmount.toString());
+      }
+    }
+  }
+
   // Deactivate vault
   parts[4] = '0';
   parts[5] = '0';
+  parts[12] = '0';
   _saveVault(owner, parts.join('|'));
-  _deleteDeferredCallId(owner);
+  _cancelASC(owner);
   
   // Update heir tracking
   for (let i = 0; i < validHeirs.length; i++) {
@@ -1529,8 +1576,13 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   
   // Save state BEFORE transfers (checks-effects-interactions)
   const vaultBalance = U64.parseInt(parts[5]);
+  // Read USDC balance before zeroing
+  while (parts.length < 14) parts.push('');
+  if (parts[12] == '') parts[12] = '0';
+  const usdcBalance = U64.parseInt(parts[12]);
   parts[4] = '0';
   parts[5] = '0';
+  parts[12] = '0';
   _saveVault(caller, parts.join('|'));
   
   // Remove from heir lists
@@ -1540,12 +1592,15 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
     if (heirs[i].length > 0) _removeVaultFromHeir(heirs[i], caller);
   }
   
-  // Interactions last: return remaining balance
+  // Interactions last: return remaining balances
   if (vaultBalance > 0) {
     transferCoins(new Address(caller), vaultBalance);
   }
+  if (usdcBalance > 0) {
+    _transferUsdcTo(caller, usdcBalance);
+  }
   
-  generateEvent('VAULT_DEACTIVATED:' + caller);
+  generateEvent('VAULT_DEACTIVATED:' + caller + ':masReturned=' + vaultBalance.toString() + ':usdcReturned=' + usdcBalance.toString());
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
