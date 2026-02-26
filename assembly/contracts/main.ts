@@ -724,6 +724,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
       generateEvent('SUBSCRIPTION_PAID:' + caller + ':tier=' + tier.toString() + ':amount=' + subscriptionPayment.toString());
     }
   }
+  _addRevenue(ORACLE_FEE);
   
   const now = Context.timestamp();
   const unlockDate = now + interval;
@@ -736,7 +737,7 @@ export function createVault(binaryArgs: StaticArray<u8>): void {
     subscriptionExpiry = now + SUBSCRIPTION_PERIOD;
   }
   
-  // Vault data: 12 fields
+  // Vault data: 14 fields
   // tier|unlockDate|interval|lastPing|isActive|vaultBalance|heirs|payload|arweave|encKey|subscriptionExpiry|lastFeeCollection|usdcBalance|usdcClaimed
   const vaultData = tier.toString() + '|' + 
     unlockDate.toString() + '|' + 
@@ -824,6 +825,7 @@ export function ping(_binaryArgs: StaticArray<u8>): void {
     parts[11] = now.toString(); // Update lastFeeCollection
     generateEvent("AUM_FEE_COLLECTED:" + caller + ":" + aumFee.toString());
   }
+  _addRevenue(ORACLE_FEE);
   
   // Check max balance
   const maxBalance = _getMaxBalance(tier);
@@ -965,6 +967,7 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   const interval = args.nextU64().unwrap();
   const payload = args.nextString().unwrap();
   const arweaveTxId = args.nextString().unwrap();
+  if (arweaveTxId.length > 0) assert(tier >= TIER_VAULT_PRO, 'Arweave requires PRO+');
   const encryptedKey = args.nextString().unwrap();
   assert(!_containsPipe(arweaveTxId), 'ArweaveTxId cannot contain pipe');
   assert(!_containsPipe(encryptedKey), 'EncryptedKey cannot contain pipe');
@@ -993,11 +996,18 @@ export function createVaultWithUsdc(binaryArgs: StaticArray<u8>): void {
   const minGasDeposit = _calcMinGasDeposit(interval);
   const minGas = minGasDeposit + ORACLE_FEE;
   assert(transferred >= minGas, 'Insufficient MAS for gas');
-  // Use all MAS beyond oracle fee for gas + vault balance
-  const availableForGas = transferred - ORACLE_FEE;
-  const gasDeposit = availableForGas > minGasDeposit ? availableForGas : minGasDeposit;
-  const userBalance = transferred > ORACLE_FEE + gasDeposit ? transferred - ORACLE_FEE - gasDeposit : 0;
-  
+  // Gas hint from frontend for proper gas/balance split
+  const gasHintResult = args.nextU64();
+  let gasDeposit: u64 = 0;
+  if (gasHintResult.isOk()) {
+    const hintedGas = gasHintResult.unwrap();
+    gasDeposit = hintedGas >= minGasDeposit ? hintedGas : minGasDeposit;
+  } else {
+    gasDeposit = minGasDeposit;
+  }
+  assert(transferred >= ORACLE_FEE + gasDeposit, "Insufficient MAS for gas");
+  const userBalance = transferred - ORACLE_FEE - gasDeposit;
+  _addRevenue(ORACLE_FEE);
   // Parse optional explicit vault balance (last MAS arg)
   const vaultBalanceResultUsdc = args.nextU64();
   let finalUserBalance: u64 = userBalance;
@@ -1122,46 +1132,43 @@ export function claimInheritanceWithUsdc(binaryArgs: StaticArray<u8>): void {
   const perHeir = vaultBalance / u64(validHeirs.length);
   const remainder = vaultBalance % u64(validHeirs.length);
   
-  for (let i = 0; i < validHeirs.length; i++) {
-    let amount = perHeir;
-    if (i == 0) amount += remainder;
-    if (amount > 0) transferCoins(new Address(validHeirs[i]), amount);
-    _removeVaultFromHeir(validHeirs[i], ownerAddress);
-  }
-  
+  // === EFFECTS FIRST (CEI pattern) ===
   _saveDistributedAmount(ownerAddress, vaultBalance, perHeir, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : '', parts.length > 8 ? parts[8] : '', parts.length > 9 ? parts[9] : '');
   for (let i = 0; i < validHeirs.length; i++) {
     _addDistributedToHeir(validHeirs[i], ownerAddress);
+    _removeVaultFromHeir(validHeirs[i], ownerAddress);
   }
-  // Distribute USDC if any
+
   while (parts.length < 14) parts.push('');
   if (parts[12] == '') parts[12] = '0';
   const usdcBalance = U64.parseInt(parts[12]);
 
   parts[4] = '0';
   parts[5] = '0';
-  parts[12] = '0';
+  // USDC not zeroed - left for manual claim via claimUsdc
   _saveVault(ownerAddress, parts.join('|'));
   _cancelASC(ownerAddress);
 
-  // Interactions last: distribute USDC to heirs
-  if (usdcBalance > 0 && validHeirs.length > 0) {
-    const usdcShare = usdcBalance / u64(validHeirs.length);
-    const usdcRemainder = usdcBalance % u64(validHeirs.length);
-    for (let j = 0; j < validHeirs.length; j++) {
-      let usdcAmt = usdcShare;
-      if (j == 0) usdcAmt += usdcRemainder;
-      if (usdcAmt > 0) {
-        _transferUsdcTo(validHeirs[j], usdcAmt);
-        generateEvent('USDC_INHERITED:' + validHeirs[j] + ':' + usdcAmt.toString());
-      }
+  // === INTERACTIONS LAST ===
+  for (let i = 0; i < validHeirs.length; i++) {
+    let amount = perHeir;
+    if (i == 0) amount += remainder;
+    if (amount > 0) {
+      transferCoins(new Address(validHeirs[i]), amount);
+      generateEvent('INHERITANCE_SENT:' + validHeirs[i] + ':' + amount.toString());
     }
   }
+
+  if (usdcBalance > 0) {
+    generateEvent('USDC_PENDING_CLAIM:' + ownerAddress + ':' + usdcBalance.toString());
+  }
+
   // USDC subscription payment
   if (claimUsdcPrice > 0) {
     const claimAdmin = _getAdmin(); if (claimAdmin.length > 0) _transferUsdcDirect(caller, claimAdmin, claimUsdcPrice);
   }
   generateEvent('INHERITANCE_CLAIMED_USDC:' + ownerAddress + ':by=' + caller);
+
 }
 
 export function getSubscriptionPriceUsdc(binaryArgs: StaticArray<u8>): StaticArray<u8> {
@@ -1307,7 +1314,7 @@ export function claimUsdc(binaryArgs: StaticArray<u8>): void {
 
   // If all heirs claimed, zero out
   if (claimed.length >= validHeirs.length) {
-    parts[12] = '0';
+    // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
   }
 
   _saveVault(ownerAddress, parts.join('|'));
@@ -1501,52 +1508,58 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
   
   // Distribute only vault balance to heirs, gas deposit stays on contract
   const totalToDistribute = vaultBalance;
-  
+
+  // Read USDC balance before state changes
+  while (parts.length < 14) parts.push('');
+  if (parts[12] == '') parts[12] = '0';
+  const usdcBalance = U64.parseInt(parts[12]);
+
+  // Pre-compute MAS shares
+  let share: u64 = 0;
+  let remainder: u64 = 0;
   if (totalToDistribute > 0 && validHeirs.length > 0) {
-    const share = totalToDistribute / (validHeirs.length as u64);
-    const remainder = totalToDistribute % (validHeirs.length as u64);
-    
+    share = totalToDistribute / (validHeirs.length as u64);
+    remainder = totalToDistribute % (validHeirs.length as u64);
+  }
+
+  // Pre-compute USDC shares
+  let usdcShare: u64 = 0;
+  let usdcRemainder: u64 = 0;
+  if (usdcBalance > 0 && validHeirs.length > 0) {
+    usdcShare = usdcBalance / u64(validHeirs.length);
+    usdcRemainder = usdcBalance % u64(validHeirs.length);
+  }
+
+  // === EFFECTS FIRST (CEI pattern) ===
+  if (totalToDistribute > 0 && validHeirs.length > 0) {
+    _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : "", parts.length > 8 ? parts[8] : "", parts.length > 9 ? parts[9] : "");
+  }
+
+  parts[4] = '0';
+  parts[5] = '0';
+  // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
+  _saveVault(owner, parts.join('|'));
+  _cancelASC(owner);
+
+  for (let i = 0; i < validHeirs.length; i++) {
+    _addDistributedToHeir(validHeirs[i], owner);
+    _removeVaultFromHeir(validHeirs[i], owner);
+  }
+
+  // === INTERACTIONS LAST ===
+  if (totalToDistribute > 0 && validHeirs.length > 0) {
     for (let i = 0; i < validHeirs.length; i++) {
       let amount = share;
       if (i == 0) amount += remainder;
-      
       if (amount > 0) {
         transferCoins(new Address(validHeirs[i]), amount);
         generateEvent('INHERITANCE_SENT:' + validHeirs[i] + ':' + amount.toString());
       }
     }
-    
-    _saveDistributedAmount(owner, totalToDistribute, share, validHeirs.length, feeCollected, parts.length > 7 ? parts[7] : "", parts.length > 8 ? parts[8] : "", parts.length > 9 ? parts[9] : "");
   }
-  
-  // Distribute USDC if any
-  while (parts.length < 14) parts.push('');
-  if (parts[12] == '') parts[12] = '0';
-  const usdcBalance = U64.parseInt(parts[12]);
-  if (usdcBalance > 0 && validHeirs.length > 0) {
-    const usdcShare = usdcBalance / u64(validHeirs.length);
-    const usdcRemainder = usdcBalance % u64(validHeirs.length);
-    for (let j = 0; j < validHeirs.length; j++) {
-      let usdcAmount = usdcShare;
-      if (j == 0) usdcAmount += usdcRemainder;
-      if (usdcAmount > 0) {
-        _transferUsdcTo(validHeirs[j], usdcAmount);
-        generateEvent('USDC_INHERITED:' + validHeirs[j] + ':' + usdcAmount.toString());
-      }
-    }
-  }
-
-  // Deactivate vault
-  parts[4] = '0';
-  parts[5] = '0';
-  parts[12] = '0';
-  _saveVault(owner, parts.join('|'));
-  _cancelASC(owner);
-  
-  // Update heir tracking
-  for (let i = 0; i < validHeirs.length; i++) {
-    _addDistributedToHeir(validHeirs[i], owner);
-    _removeVaultFromHeir(validHeirs[i], owner);
+  // USDC NOT distributed via ASC - left for manual claim to prevent vault freeze
+  if (usdcBalance > 0) {
+    generateEvent("USDC_PENDING_CLAIM:" + owner + ":" + usdcBalance.toString());
   }
   
   generateEvent('VAULT_UNLOCKED:' + owner);
@@ -1582,7 +1595,7 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   const usdcBalance = U64.parseInt(parts[12]);
   parts[4] = '0';
   parts[5] = '0';
-  parts[12] = '0';
+  // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
   _saveVault(caller, parts.join('|'));
   
   // Remove from heir lists

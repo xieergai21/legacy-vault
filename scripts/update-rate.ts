@@ -24,7 +24,7 @@ const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price?ids=massa&v
 const config = {
   // Oracle private key (must match ORACLE_ADDRESS from deploy)
   oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || '',
-  contractAddress: process.env.CONTRACT_ADDRESS || 'AS12AtE8aZULz4cD4b1mPJ6HLrG26XoWWTc2eq4GYjdFZmq9wReNy',
+  contractAddress: process.env.CONTRACT_ADDRESS || 'AS17R9rZPJXzrP2CP63oPp2aog1tm8izkqdogHCXDCxYMqy1NMdn',
 };
 
 function toNanoMassa(massa: number): bigint {
@@ -119,7 +119,9 @@ async function main(): Promise<void> {
   console.log(`\n👛 Oracle wallet: ${oracleAddress}`);
   console.log(`📄 Contract: ${config.contractAddress}`);
 
-  const provider = Web3Provider.buildnet(account);
+  const NETWORK = process.env.NETWORK || "buildnet";
+  const provider = NETWORK === "mainnet" ? Web3Provider.mainnet(account) : Web3Provider.buildnet(account);
+  console.log(`🌐 Network: ${NETWORK}`);
   const contract = new SmartContract(provider, config.contractAddress);
 
   // Get current rate from contract
