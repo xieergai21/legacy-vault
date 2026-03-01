@@ -37,8 +37,9 @@ async function deploy(): Promise<void> {
   const walletAddress = account.address.toString();
   console.log(`👛 Wallet: ${walletAddress}`);
 
-  const provider = Web3Provider.buildnet(account);
-  console.log(`🌐 Network: Buildnet`);
+  const NETWORK = process.env.NETWORK || 'buildnet';
+  const provider = NETWORK === 'mainnet' ? Web3Provider.mainnet(account) : Web3Provider.buildnet(account);
+  console.log(`🌐 Network: ${NETWORK}`);
 
   const wasmPath = path.resolve(config.wasmPath);
   console.log(`📄 WASM: ${wasmPath}`);

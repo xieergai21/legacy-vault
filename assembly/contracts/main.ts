@@ -1314,7 +1314,7 @@ export function claimUsdc(binaryArgs: StaticArray<u8>): void {
 
   // If all heirs claimed, zero out
   if (claimed.length >= validHeirs.length) {
-    // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
+    parts[12] = '0'; // All heirs claimed - zero USDC balance
   }
 
   _saveVault(ownerAddress, parts.join('|'));
@@ -1537,7 +1537,7 @@ function _executeDistribution(owner: string, parts: string[], receivedCoins: u64
 
   parts[4] = '0';
   parts[5] = '0';
-  // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
+  parts[12] = '0'; // Zero USDC - left for manual claim via claimUsdc
   _saveVault(owner, parts.join('|'));
   _cancelASC(owner);
 
@@ -1595,7 +1595,7 @@ export function deactivateVault(_binaryArgs: StaticArray<u8>): void {
   const usdcBalance = U64.parseInt(parts[12]);
   parts[4] = '0';
   parts[5] = '0';
-  // parts[12] NOT zeroed - USDC left for manual claim via claimUsdc
+  parts[12] = '0'; // Zero USDC - owner gets it back via transfer below
   _saveVault(caller, parts.join('|'));
   
   // Remove from heir lists
@@ -1728,6 +1728,7 @@ export function updateInterval(binaryArgs: StaticArray<u8>): void {
   const minGas = _calcMinGasDeposit(newInterval) + ORACLE_FEE;
   assert(transferred >= minGas, 'Must send gas for ASC reschedule');
   const gasFunding = transferred - ORACLE_FEE;
+  _addRevenue(ORACLE_FEE);
   
   // Cancel old ASC (coins returned to contract as gas excess)
   _cancelASC(caller);

@@ -24,7 +24,7 @@ const COINGECKO_API = 'https://api.coingecko.com/api/v3/simple/price?ids=massa&v
 const config = {
   // Oracle private key (must match ORACLE_ADDRESS from deploy)
   oraclePrivateKey: process.env.ORACLE_PRIVATE_KEY || process.env.DEPLOYER_PRIVATE_KEY || '',
-  contractAddress: process.env.CONTRACT_ADDRESS || 'AS17R9rZPJXzrP2CP63oPp2aog1tm8izkqdogHCXDCxYMqy1NMdn',
+  contractAddress: process.env.CONTRACT_ADDRESS || 'AS1QJSAktZomaJgcpy12Yvg4a4PYZKYcgXq9jgdFLSUVGg9g15D7',
 };
 
 function toNanoMassa(massa: number): bigint {
